@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import TypedDict, List, Literal, Annotated
+from typing import TypedDict, List, Literal, Annotated, Optional
 import operator
 
 
@@ -34,13 +34,47 @@ class Plan(BaseModel):
     tone: str = Field(..., description="Writing tone (e.g., practical, crisp).")
     tasks: List[Task]  
 
+class RouterOutput(BaseModel):
+    needs_research: bool = Field(..., description="Must be a boolean: True or False (not a string)")
+    mode: Literal["closed_book", "hybrid", "open_book"] = Field(..., description="One of: closed_book, hybrid, open_book")
+    reason: str = Field(..., description="Explanation for the routing decision")
+    queries: List[str] = Field(default_factory=list, description="List of search queries if needs_research is true")
+    max_results_per_query: int = Field(5, description="How many results to fetch per query (3–8).")
+
+
+class EvidenceItem(BaseModel):
+    title: str
+    url: str
+    published_at: Optional[str] = None  # prefer ISO "YYYY-MM-DD"
+    snippet: Optional[str] = None
+    source: Optional[str] = None
+
+class EvidencePack(BaseModel):
+    items: List[EvidenceItem]
+
 class BlogAgentState(TypedDict):
     prompt: str
-    plan: Plan
+    
     approval: str
     tone: str
     content: str
-    sections: Annotated[List[str], operator.add]  # reducer concatenates worker outputs
     markdown_content: str
-    tags: list[str]
     topic: str
+    as_of: str   # ISO date, e.g. "2026-01-29"
+    
+    #fanout
+    sections: Annotated[List[str], operator.add]  # reducer concatenates worker outputs
+
+
+    #plan
+    plan: Plan
+
+    #research    
+    evidence: List[EvidenceItem]
+    
+
+    #router
+    recency_days: int    # 7 for weekly news, 30 for hybrid, etc.
+    mode:Literal["closed_book","open_book","hybrid"]
+    queries: List[str]
+    needs_research: bool 

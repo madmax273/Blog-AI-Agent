@@ -1,13 +1,19 @@
+import os
+import sys
+
+# Set environment variables BEFORE any LangGraph imports to suppress warnings
+os.environ["LANGGRAPH_STRICT_MSGPACK"] = "false"
+
 from fastapi.openapi.models import OAuthFlowClientCredentials
 from langchain_core.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END,START
 from typing import Dict, Any
 from langchain_groq import ChatGroq
-import os
-import sys
 from pathlib import Path
 from langgraph.types import Send
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_tavily import TavilySearch
+from typing import List
 
 # Add parent directory to Python path for direct execution
 #TODO: Remove this when running as a module
@@ -16,9 +22,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from langgraph.types import interrupt,Command
 from typing_extensions import   TypedDict
 from langgraph.checkpoint.memory import InMemorySaver
-from Models.agent_models import BlogAgentState,Plan
-from utils.agent_prompts import PLANNING_PROMPT,GENERATOR_PROMPT
+from Models.agent_models import BlogAgentState,Plan,RouterOutput,EvidencePack,EvidenceItem
+from utils.agent_prompts import PLANNING_PROMPT,GENERATOR_PROMPT,ROUTER_PROMPT,RESEARCH_PROMPT
+from dotenv import load_dotenv
+from datetime import datetime, date, timedelta
+import asyncio
 
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+def _iso_to_date(date_str: str) -> date:
+    """Convert ISO date string to date object, return None if invalid."""
+    if not date_str:
+        return None
+    try:
+        return date.fromisoformat(date_str.split("T")[0])
+    except (ValueError, AttributeError):
+        return None
 
 def check_approval(state: BlogAgentState)->str:
     """
@@ -29,7 +48,36 @@ def check_approval(state: BlogAgentState)->str:
     else:
         return "planner"
 
+def _tavily_search(query: str, max_results: int = 3) -> List[dict]:
+    """
+    Uses TavilySearch if installed and TAVILY_API_KEY is set.
+    Returns list of dict with common fields. Note: published date is often missing.
+    """
+    tool = TavilySearch(max_results=max_results)
+    results = tool.invoke({"query": query})
 
+    normalized: List[dict] = []
+    # New TavilySearch returns a dict with 'results' key
+    if isinstance(results, dict) and 'results' in results:
+        results_list = results['results']
+    else:
+        results_list = results if isinstance(results, list) else []
+    
+    for r in results_list or []:
+        normalized.append(
+            {
+                "title": r.get("title") or "",
+                "url": r.get("url") or "",
+                "snippet": r.get("content") or r.get("snippet") or "",
+                "published_at": r.get("published_date") or r.get("published_at") or "",
+                "source": r.get("source") or "",
+            }
+        )
+    print("\n========Tavily searched====\n")    
+    return normalized   
+
+def route_next(state: BlogAgentState) -> str:
+    return "research" if state["needs_research"] else "planner"      
 
 
 class BlogAgent:
@@ -45,6 +93,90 @@ class BlogAgent:
         if self.compiled_graph is None:
             self.compiled_graph = await self._build_graph()
         return self.compiled_graph
+
+    async def router_node(self, state: BlogAgentState) -> dict:
+        topic = state["prompt"]
+        decider = self.llm.with_structured_output(RouterOutput)
+        decision = await decider.ainvoke(
+            [
+                SystemMessage(content=ROUTER_PROMPT),
+                HumanMessage(content=f"Topic: {topic}\nAs-of date: {state['as_of']}"),
+            ]
+        )
+
+        # Set default recency window based on mode
+        if decision.mode == "open_book":
+            recency_days = 7
+        elif decision.mode == "hybrid":
+            recency_days = 45
+        else:
+            recency_days = 3650
+
+        print(f"Decision: {decision}")
+        print(f"Recency days: {recency_days}")
+        print(f"State: {state}")
+
+
+        return {
+            "needs_research": decision.needs_research,
+            "mode": decision.mode,
+            "queries": decision.queries,
+            "recency_days": recency_days,
+        }
+
+
+    
+    async def research_node(self, state: BlogAgentState) -> dict:
+        queries = (state.get("queries", []) or [])[:10]
+        max_results = 2
+
+        raw_results: List[dict] = []
+        for q in queries:
+            raw_results.extend(_tavily_search(q, max_results=max_results))
+        print("\n===Results from tavily===\n",raw_results)
+        if not raw_results:
+            return {"evidence": []}
+
+        extractor = self.llm.with_structured_output(EvidencePack)
+        pack = await extractor.ainvoke(
+            [
+                SystemMessage(content=RESEARCH_PROMPT),
+                HumanMessage(
+                    content=(
+                        f"As-of date: {state['as_of']}\n"
+                        f"Recency days: {state['recency_days']}\n\n"
+                        f"Raw results:\n{raw_results}"
+                    )
+                ),
+            ]
+        )
+
+        print("\n===Evidence pack===\n",pack)
+
+        # Deduplicate by URL
+        dedup = {}
+        for e in pack.items:
+            if e.url:
+                dedup[e.url] = e
+        evidence = list(dedup.values())
+
+        # HARD RECENCY FILTER for open_book weekly roundup:
+        # keep only items with a parseable ISO date and within the window.
+        mode = state.get("mode", "closed_book")
+        if mode == "open_book":
+            as_of = date.fromisoformat(state["as_of"])
+            cutoff = as_of - timedelta(days=int(state["recency_days"]))
+            fresh: List[EvidenceItem] = []
+            for e in evidence:
+                d = _iso_to_date(e.published_at)
+                if d and d >= cutoff:
+                    fresh.append(e)
+
+            evidence = fresh
+        print("\n===Filtered evidence===\n",evidence)
+        print("finished research node moving to planner node")
+        return {"evidence": evidence}
+
 
     async def planner_node(self, state: BlogAgentState):
             # 1. Bind the structured output to the LLM
@@ -81,23 +213,7 @@ class BlogAgent:
         
         return {"approval": "approved"}    
     
-    # async def generate_node(self, state: BlogAgentState):
-
-
-    #     prompt = """
-    #     you are a content generator agent, you need to generate the blog content based on the plan given by the planner agent
-        
-    #     {plan}
-    #     """
-    #     prompt_template=PromptTemplate(template=prompt, input_variables=["plan"])
-        
-    #     llm = ChatGroq(api_key=self.api_key, model="llama-3.1-8b-instant")
-    #     chain = prompt_template | llm
-        
-    #     response = await chain.ainvoke({"plan": state["plan"]})
-    #     return {"content": response.content}
-
-    async def fanout(aelf,state: BlogAgentState):
+    async def fanout(self,state: BlogAgentState):
         return [
             Send(
                 "worker",
@@ -140,22 +256,7 @@ class BlogAgent:
 
         return {"sections": [section_md]}
     
-
-    # async def converter_node(self, state: BlogAgentState):
-    #     content=state["content"]
-        
-    #     prompt = """convert the following content to markdown format
-        
-    #     {content}
-    #     """
-    #     prompt_template=PromptTemplate(template=prompt, input_variables=["content"])
-        
-    #     llm = ChatGroq(api_key=self.api_key, model="llama-3.1-8b-instant")
-    #     chain = prompt_template | llm
-        
-    #     response = await chain.ainvoke({"content": content})
-    #     return {"markdown_content": response.content}
-       
+      
     async def reducer(self, state: BlogAgentState) -> dict:
 
         title = state["plan"].blog_title
@@ -174,17 +275,22 @@ class BlogAgent:
 
     async def _build_graph(self):
         graph = StateGraph(BlogAgentState)
+        graph.add_node("router", self.router_node)
+        graph.add_node("research", self.research_node)
         graph.add_node("planner", self.planner_node)
         graph.add_node("hitl", self.hitl_node)
         graph.add_node("worker", self.worker)
         graph.add_node("reducer", self.reducer)
         
-        graph.add_edge(START, "planner")
-        graph.add_edge("planner", "hitl")
-        graph.add_conditional_edges("hitl",check_approval)
-        graph.add_conditional_edges("hitl", self.fanout, ["worker"])
-        graph.add_edge("worker", "reducer")
-        graph.add_edge("reducer", END)
+        graph.add_edge(START, "router")
+        graph.add_conditional_edges("router",route_next)
+        graph.add_edge("research", END)
+        # graph.add_edge("router", "planner")
+        # graph.add_edge("planner", "hitl")
+        # graph.add_conditional_edges("hitl",check_approval)
+        # graph.add_conditional_edges("hitl", self.fanout, ["worker"])
+        # graph.add_edge("worker", "reducer")
+        # graph.add_edge("reducer", END)
         checkpoint = InMemorySaver()
         compiled_graph= graph.compile(checkpointer=checkpoint)
         return compiled_graph
@@ -192,47 +298,51 @@ class BlogAgent:
 
 
 
-if __name__ == "__main__":
-    import os
-    import asyncio
-    from dotenv import load_dotenv
+async def main():
+    
+    # Set environment variable to handle msgpack serialization
+    os.environ["LANGGRAPH_STRICT_MSGPACK"] = "false"
     
     # Load environment variables from .env file
     load_dotenv()
     
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant")
+    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
     checkpointer = InMemorySaver()
-    
-    async def main():
-        # Create agent instance
-        agent = BlogAgent(GROQ_API_KEY, llm=llm, checkpointer=checkpointer)
-        config = {"configurable": {"thread_id": "1"}}
-        compiled_graph = await agent.initialize_graph()
-        # Run the agent asynchronously
-        result = await compiled_graph.ainvoke({
-            "prompt": "Write a blog about AI in just 500 words",
-            "tone": "informative"
-        }, config=config)
 
-        # Handle interrupts in a loop until workflow completes
-        while True:
-            state = agent.compiled_graph.get_state(config)
+    
+    
+    # Create agent instance
+    today = datetime.now().strftime("%Y-%m-%d")
+    agent = BlogAgent(GROQ_API_KEY, llm=llm, checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": "1"}}
+    compiled_graph = await agent.initialize_graph()
+    # Run the agent asynchronously
+    result = await compiled_graph.ainvoke({
+        "prompt": "create a blog on Pornography main actresses",
+        "tone": "informative",
+        "recency_days": 7,
+        "as_of": today
+    }, config=config)
+
+    # Handle interrupts in a loop until workflow completes
+    while True:
+        state = agent.compiled_graph.get_state(config)
             
-            if not state.next:
-                break  # Workflow completed
-                
-            user_input = input("approver: ")
-            user_suggestions = input("Enter your suggestions: ")
-            user_input = user_input.strip()
-            user_suggestions = user_suggestions.strip()
-            user_feedback_dict = {
-                "approval": "approved" if user_input.lower() in ["yes", "approved"] else "rejected",
-                "suggestions": user_suggestions
-            }
+        if not state.next:
+            break  # Workflow completed
             
-            result = await agent.compiled_graph.ainvoke(
-                Command(resume=user_feedback_dict),
+        user_input = input("approver: ")
+        user_suggestions = input("Enter your suggestions: ")
+        user_input = user_input.strip()
+        user_suggestions = user_suggestions.strip()
+        user_feedback_dict = {
+            "approval": "approved" if user_input.lower() in ["yes", "approved"] else "rejected",
+            "suggestions": user_suggestions
+        }
+        
+        result = await agent.compiled_graph.ainvoke(
+            Command(resume=user_feedback_dict),
                 config=config
             )
         
@@ -241,11 +351,16 @@ if __name__ == "__main__":
         print("\nGenerated Content:")
         print(result.get("content", "No content generated"))
         print("\nSections:")
-        print(result.get("sections", "No sections generated"))
+        print(len(result.get("sections", [])))
+        print()
     
         
         
         
-    
+if __name__ == "__main__":    
     # Run the async main function
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
