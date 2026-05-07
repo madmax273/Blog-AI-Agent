@@ -2,7 +2,10 @@ import os
 import sys
 
 # Set environment variables BEFORE any LangGraph imports to suppress warnings
+
+os.environ["LANGGRAPH_ALLOWED_MSGPACK_MODULES"] = "Models.agent_models,langgraph.types,langchain_core.messages,langchain_core.prompts"
 os.environ["LANGGRAPH_STRICT_MSGPACK"] = "false"
+
 
 from fastapi.openapi.models import OAuthFlowClientCredentials
 from langchain_core.prompts import PromptTemplate
@@ -26,6 +29,7 @@ from Models.agent_models import BlogAgentState,Plan,RouterOutput,EvidencePack,Ev
 from utils.agent_prompts import PLANNING_PROMPT,GENERATOR_PROMPT,ROUTER_PROMPT,RESEARCH_PROMPT
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
+
 import asyncio
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -122,10 +126,9 @@ class BlogAgent:
             "mode": decision.mode,
             "queries": decision.queries,
             "recency_days": recency_days,
+            "topic": topic
         }
-
-
-    
+ 
     async def research_node(self, state: BlogAgentState) -> dict:
         queries = (state.get("queries", []) or [])[:10]
         max_results = 2
@@ -177,31 +180,59 @@ class BlogAgent:
         print("finished research node moving to planner node")
         return {"evidence": evidence}
 
-
     async def planner_node(self, state: BlogAgentState):
-            # 1. Bind the structured output to the LLM
-            structured_llm = self.llm.with_structured_output(Plan)
-            
-            # 2. Define the template
-            prompt_template = PromptTemplate.from_template(PLANNING_PROMPT)
-            
-            # 3. Create the chain (Template -> LLM)
-            # The prompt_template will format the input, then pass it to the LLM
-            chain = prompt_template | structured_llm
-            
-            # 4. Invoke the chain
-            response = await chain.ainvoke({
-                "user_prompt": state["prompt"],
-                "tone": state["tone"]
-            })
-            
-            return {
-                "plan": response, 
-                "topic": state["prompt"]
-            }  
+        print("\n=== PLANNER NODE STARTING ===")
+        print(f"State keys: {state.keys()}")
+        
+        planner = self.llm.with_structured_output(Plan)
+        evidence = state.get("evidence", [])
+        mode = state.get("mode", "closed_book")
+        
+        print(f"Evidence count: {len(evidence)}")
+        print(f"Mode: {mode}")
+
+        # Force blog_kind for open_book
+        forced_kind = "news_roundup" if mode == "open_book" else None
+
+        try:
+            plan = await planner.ainvoke(
+                [
+                    SystemMessage(content=PLANNING_PROMPT),
+                    HumanMessage(
+                        content=(
+                            f"Topic: {state['topic']}\n"
+                            f"Mode: {mode}\n"
+                            f"As-of: {state['as_of']} (recency_days={state['recency_days']})\n"
+                            f"{'Force blog_kind=news_roundup' if forced_kind else ''}\n\n"
+                            f"Evidence (ONLY use for fresh claims; may be empty):\n"
+                            f"{[e.model_dump() for e in evidence][:16]}\n\n"
+                            f"Instruction: If mode=open_book, your plan must NOT drift into a tutorial."
+                        )
+                    ),
+                ]
+            )
+            print(f"\n=== PLAN GENERATED ===")
+            print(f"Title: {plan.blog_title}")
+            print(f"Tasks: {len(plan.tasks)}")
+        except Exception as e:
+            print(f"\n=== PLANNER ERROR ===")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+        # Ensure open_book forces the kind even if model forgets
+        if forced_kind:
+            plan.blog_kind = "news_roundup"
+
+        # Convert Plan to dict for serialization
+        print("=== PLANNER NODE COMPLETE ===\n")
+        return {"plan": plan.model_dump()}
 
     async def hitl_node(self,state: BlogAgentState):
-        plan_generated=state["plan"]
+        plan_data = state["plan"]
+        plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
+        plan_generated=plan
         
         message_for_hitl=interrupt(f"Plan generated: {plan_generated}\nDo you like the plan? (yes/no): or you have some feedback? ")
         
@@ -214,19 +245,22 @@ class BlogAgent:
         return {"approval": "approved"}    
     
     async def fanout(self,state: BlogAgentState):
+        plan_data = state["plan"]
+        plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
         return [
             Send(
                 "worker",
-                {"task": task, "topic": state["topic"], "plan": state["plan"]},
+                {"task": task, "topic": state["topic"], "plan": plan},
             )
-            for task in state["plan"].tasks
+            for task in plan.tasks
         ]
 
     async def worker(self,payload: dict) -> dict:
 
         task = payload["task"]
         topic = payload["topic"]
-        plan = payload["plan"]
+        plan_data = payload["plan"]
+        plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
 
         bullets_text = "\n- " + "\n- ".join(task.bullets)
         response = await self.llm.ainvoke(
@@ -258,8 +292,10 @@ class BlogAgent:
     
       
     async def reducer(self, state: BlogAgentState) -> dict:
-
-        title = state["plan"].blog_title
+        plan_data = state["plan"]
+        plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
+        
+        title = plan.blog_title
         body = "\n\n".join(state["sections"]).strip()
         
         final_md = f"# {title}\n\n{body}\n"
@@ -284,13 +320,12 @@ class BlogAgent:
         
         graph.add_edge(START, "router")
         graph.add_conditional_edges("router",route_next)
-        graph.add_edge("research", END)
-        # graph.add_edge("router", "planner")
-        # graph.add_edge("planner", "hitl")
-        # graph.add_conditional_edges("hitl",check_approval)
-        # graph.add_conditional_edges("hitl", self.fanout, ["worker"])
-        # graph.add_edge("worker", "reducer")
-        # graph.add_edge("reducer", END)
+        graph.add_edge("research", "planner")
+        graph.add_edge("planner", "hitl")
+        graph.add_conditional_edges("hitl",check_approval)
+        graph.add_conditional_edges("hitl", self.fanout, ["worker"])
+        graph.add_edge("worker", "reducer")
+        graph.add_edge("reducer", END)
         checkpoint = InMemorySaver()
         compiled_graph= graph.compile(checkpointer=checkpoint)
         return compiled_graph
@@ -301,7 +336,6 @@ class BlogAgent:
 async def main():
     
     # Set environment variable to handle msgpack serialization
-    os.environ["LANGGRAPH_STRICT_MSGPACK"] = "false"
     
     # Load environment variables from .env file
     load_dotenv()
@@ -315,11 +349,11 @@ async def main():
     # Create agent instance
     today = datetime.now().strftime("%Y-%m-%d")
     agent = BlogAgent(GROQ_API_KEY, llm=llm, checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": "1"}}
+    config = {"configurable": {"thread_id": "2"}}
     compiled_graph = await agent.initialize_graph()
     # Run the agent asynchronously
     result = await compiled_graph.ainvoke({
-        "prompt": "create a blog on Pornography main actresses",
+        "prompt": "Create a blog on the career of Mia khalifa her size,success,fame and current status",
         "tone": "informative",
         "recency_days": 7,
         "as_of": today

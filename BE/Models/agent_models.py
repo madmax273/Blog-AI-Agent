@@ -32,7 +32,10 @@ class Plan(BaseModel):
     blog_title: str
     audience: str = Field(..., description="Who this blog is for.")
     tone: str = Field(..., description="Writing tone (e.g., practical, crisp).")
-    tasks: List[Task]  
+    tasks: List[Task]
+    # NEW: tells workers what genre this is (prevents drift)
+    blog_kind: Literal["explainer", "tutorial", "news_roundup", "comparison", "system_design"] = "explainer"
+    constraints: List[str] = Field(default_factory=list)  
 
 class RouterOutput(BaseModel):
     needs_research: bool = Field(..., description="Must be a boolean: True or False (not a string)")
