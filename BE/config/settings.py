@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 import os
 
 
@@ -8,6 +8,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "Blog API"
     APP_VERSION: str = "1.0.0"
     APP_DESCRIPTION: str = "A simple blog API built with FastAPI"
+    
+    # API Keys
+    OPENAI_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
+    TAVILY_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None
+    LANGSMITH_TRACING: Optional[str] = None
+    LANGSMITH_ENDPOINT: Optional[str] = None
+    LANGSMITH_API_KEY: Optional[str] = None
+    LANGSMITH_PROJECT: Optional[str] = None
     
     DEBUG: bool = False
     

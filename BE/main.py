@@ -38,6 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.api.v1.api import router as api_router
+app.include_router(api_router, prefix="/api/v1")
+
 
 @app.get("/")
 async def root():
@@ -47,7 +50,7 @@ async def root():
     response = {"message": "Welcome to Blog API"}
     
     response_time = time.time() - start_time
-    logger.log_request("GET", "/", 200, response_time)
+    logger.info(f"Response time: {response_time}")
     
     return response
 

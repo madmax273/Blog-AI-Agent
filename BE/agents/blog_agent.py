@@ -76,7 +76,7 @@ def _tavily_search(query: str, max_results: int = 3) -> List[dict]:
     return normalized   
 
 def route_next(state: BlogAgentState) -> str:
-    return "research" if state["needs_research"] else "planner"      
+    return "research" if state["needs_research"]=="true" else "planner"      
 
 
 class BlogAgent:
@@ -117,7 +117,7 @@ class BlogAgent:
 
 
         return {
-            "needs_research": decision.needs_research,
+            "needs_research": str(decision.needs_research).lower() == "true",
             "mode": decision.mode,
             "queries": decision.queries,
             "recency_days": recency_days,

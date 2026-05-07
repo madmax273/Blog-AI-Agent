@@ -38,7 +38,7 @@ class Plan(BaseModel):
     constraints: List[str] = Field(default_factory=list)  
 
 class RouterOutput(BaseModel):
-    needs_research: bool = Field(..., description="Must be a boolean: True or False (not a string)")
+    needs_research: str = Field(..., description="Must be a string: 'true' or 'false'")
     mode: Literal["closed_book", "hybrid", "open_book"] = Field(..., description="One of: closed_book, hybrid, open_book")
     queries: List[str] = Field(default_factory=list, description="List of search queries if needs_research is true")
 

@@ -82,7 +82,7 @@ ROUTER_PROMPT = """You are a routing module for a technical blog planner.
 
                   IMPORTANT: You must output valid JSON matching the RouterOutput schema exactly.
 
-                  - needs_research must be a boolean (true/false), NOT a string ("true"/"false")
+                  - needs_research must be a string ("true" or "false")
 
                   - mode must be one of: "closed_book", "hybrid", "open_book"
 
