@@ -1,47 +1,128 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Header } from "@/components/blog-ai/header"
 import { PromptInput } from "@/components/blog-ai/prompt-input"
 import { ArticlePreview } from "@/components/blog-ai/article-preview"
+import { PlanPreview } from "@/components/blog-ai/plan-preview"
+import ReactMarkdown from 'react-markdown'
 
-const sampleArticle = {
-  title: "The Future of AI-Assisted Journalism",
-  tags: ["AI INSIGHTS", "TECHNOLOGY"],
-  content: [
-    "In the evolving landscape of digital media, the intersection of human creativity and artificial intelligence is creating a new paradigm for long-form content. Editorial minimalism isn't just a design choice; it's a statement about the value of focus in an era of constant distraction.",
-    "As we move forward, tools like BlogAI act as an intellectual scaffold. They don't replace the writer's voice; they amplify it by handling the structural heavy lifting, allowing the creator to focus on the nuance, the narrative arc, and the emotional resonance that only a human can provide.",
-    "Performance in writing is measured by clarity. By utilizing a high-performance environment that recedes into the background, creators can achieve a state of flow more rapidly. This distraction-free approach ensures that the primary focus remains where it belongs: on the written word.",
-  ],
-  imageUrl: "/images/workspace.jpg",
-}
+const API_BASE = "http://localhost:8000/api/v1/blog"
 
 export default function BlogAIPage() {
   const [prompt, setPrompt] = useState("")
   const [tone, setTone] = useState("Professional")
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [showPreview, setShowPreview] = useState(true)
+  
+  // App States: idle -> generating_plan -> awaiting_approval -> generating_article -> completed
+  const [status, setStatus] = useState("idle")
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const [plan, setPlan] = useState<any>(null)
+  const [articleContent, setArticleContent] = useState<string | null>(null)
+  const [articleTitle, setArticleTitle] = useState<string>("")
+  
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  const handleGenerate = () => {
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+  }
+
+  const pollStatus = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/status/${id}`)
+      const data = await res.json()
+      
+      if (data.status === "awaiting_approval") {
+        setStatus("awaiting_approval")
+        setPlan(data.plan)
+        stopPolling()
+      } else if (data.status === "completed") {
+        setStatus("completed")
+        setArticleContent(data.markdown_content)
+        if (data.plan) {
+          setArticleTitle(data.plan.blog_title)
+        }
+        stopPolling()
+      } else if (data.status === "error") {
+        setStatus("idle")
+        alert("An error occurred during generation.")
+        stopPolling()
+      }
+    } catch (err) {
+      console.error("Polling error:", err)
+    }
+  }
+
+  const startPolling = (id: string) => {
+    stopPolling()
+    pollIntervalRef.current = setInterval(() => pollStatus(id), 3000)
+  }
+
+  useEffect(() => {
+    return () => stopPolling()
+  }, [])
+
+  const handleGenerate = async () => {
     if (!prompt.trim()) return
-    setIsGenerating(true)
-    setTimeout(() => {
-      setIsGenerating(false)
-      setShowPreview(true)
-    }, 1500)
+    
+    setStatus("generating_plan")
+    setPlan(null)
+    setArticleContent(null)
+    
+    try {
+      const res = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, tone, recency_days: 7 })
+      })
+      const data = await res.json()
+      
+      if (data.thread_id) {
+        setThreadId(data.thread_id)
+        startPolling(data.thread_id)
+      }
+    } catch (err) {
+      console.error("Generate error:", err)
+      setStatus("idle")
+    }
+  }
+
+  const handleApproval = async (approvalStatus: "approved" | "rejected", feedback: string) => {
+    if (!threadId) return
+    
+    setStatus("generating_article")
+    
+    try {
+      await fetch(`${API_BASE}/resume/${threadId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approval: approvalStatus, suggestions: feedback })
+      })
+      
+      startPolling(threadId)
+    } catch (err) {
+      console.error("Resume error:", err)
+      setStatus("awaiting_approval") // revert on error
+    }
   }
 
   const handleClear = () => {
     setPrompt("")
-    setShowPreview(false)
+    setStatus("idle")
+    setPlan(null)
+    setArticleContent(null)
+    stopPolling()
   }
 
   const handleCopy = () => {
-    const text = `${sampleArticle.title}\n\n${sampleArticle.content.join("\n\n")}`
-    navigator.clipboard.writeText(text)
+    if (articleContent) {
+      navigator.clipboard.writeText(articleContent)
+    }
   }
 
-  
+  const isGenerating = status === "generating_plan" || status === "generating_article"
 
   return (
     <div className="min-h-screen bg-background">
@@ -51,8 +132,6 @@ export default function BlogAIPage() {
         </div>
         
         <main className="space-y-5 sm:space-y-6">
-
-          {/* Content wrapper with extra space on right for floating buttons on larger screens */}
           <div className="max-w-[680px] lg:max-w-[740px] mx-auto">
             <div className="max-w-[680px]">
               <PromptInput
@@ -64,15 +143,37 @@ export default function BlogAIPage() {
                 isGenerating={isGenerating}
               />
             </div>
+            
+            {status === "generating_plan" && (
+              <div className="text-center py-8 text-sm text-muted-foreground animate-pulse">
+                Analyzing request and building a plan...
+              </div>
+            )}
+            
+            {status === "generating_article" && (
+              <div className="text-center py-8 text-sm text-muted-foreground animate-pulse">
+                Writing your article based on the approved plan...
+              </div>
+            )}
           </div>
 
-          {showPreview && (
+          {status === "awaiting_approval" && plan && (
+            <div className="max-w-[680px] lg:max-w-[740px] mx-auto relative">
+              <PlanPreview 
+                plan={plan} 
+                onApprove={(feedback) => handleApproval("approved", feedback)}
+                onReject={(feedback) => handleApproval("rejected", feedback)}
+              />
+            </div>
+          )}
+
+          {status === "completed" && articleContent && (
             <div className="max-w-[680px] lg:max-w-[740px] mx-auto relative">
               <ArticlePreview
-                title={sampleArticle.title}
-                tags={sampleArticle.tags}
-                content={sampleArticle.content}
-                imageUrl={sampleArticle.imageUrl}
+                title={articleTitle || "Generated Article"}
+                tags={["AI GENERATED", tone.toUpperCase()]}
+                content={articleContent.split('\n\n').filter(p => p.trim() !== '')} 
+                imageUrl="/images/workspace.jpg"
               />
             </div>
           )}
