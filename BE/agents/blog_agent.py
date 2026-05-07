@@ -1,31 +1,26 @@
 import os
 import sys
-
+from pathlib import Path
+#TODO: Remove this when running as a module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Set environment variables BEFORE any LangGraph imports to suppress warnings
-
-os.environ["LANGGRAPH_ALLOWED_MSGPACK_MODULES"] = "Models.agent_models,langgraph.types,langchain_core.messages,langchain_core.prompts"
-os.environ["LANGGRAPH_STRICT_MSGPACK"] = "false"
-
-
 from fastapi.openapi.models import OAuthFlowClientCredentials
 from langchain_core.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END,START
 from typing import Dict, Any
 from langchain_groq import ChatGroq
-from pathlib import Path
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 from langgraph.types import Send
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_tavily import TavilySearch
 from typing import List
 
-# Add parent directory to Python path for direct execution
-#TODO: Remove this when running as a module
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langgraph.types import interrupt,Command
 from typing_extensions import   TypedDict
 from langgraph.checkpoint.memory import InMemorySaver
-from Models.agent_models import BlogAgentState,Plan,RouterOutput,EvidencePack,EvidenceItem
+from Model.agent_models import BlogAgentState,Plan,RouterOutput,EvidencePack,EvidenceItem,Task
 from utils.agent_prompts import PLANNING_PROMPT,GENERATOR_PROMPT,ROUTER_PROMPT,RESEARCH_PROMPT
 from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
@@ -131,7 +126,7 @@ class BlogAgent:
  
     async def research_node(self, state: BlogAgentState) -> dict:
         queries = (state.get("queries", []) or [])[:10]
-        max_results = 2
+        max_results = 1
 
         raw_results: List[dict] = []
         for q in queries:
@@ -202,11 +197,8 @@ class BlogAgent:
                         content=(
                             f"Topic: {state['topic']}\n"
                             f"Mode: {mode}\n"
-                            f"As-of: {state['as_of']} (recency_days={state['recency_days']})\n"
-                            f"{'Force blog_kind=news_roundup' if forced_kind else ''}\n\n"
                             f"Evidence (ONLY use for fresh claims; may be empty):\n"
                             f"{[e.model_dump() for e in evidence][:16]}\n\n"
-                            f"Instruction: If mode=open_book, your plan must NOT drift into a tutorial."
                         )
                     ),
                 ]
@@ -247,56 +239,75 @@ class BlogAgent:
     async def fanout(self,state: BlogAgentState):
         plan_data = state["plan"]
         plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
+        evidence = state.get("evidence", [])
         return [
             Send(
                 "worker",
-                {"task": task, "topic": state["topic"], "plan": plan},
+                {"task": task, "topic": state["topic"], "plan": plan, "mode":state.get("mode", "closed_book"),"evidence":evidence},
             )
             for task in plan.tasks
         ]
 
     async def worker(self,payload: dict) -> dict:
 
-        task = payload["task"]
-        topic = payload["topic"]
+        task_data = payload["task"]
+        task = Task(**task_data) if isinstance(task_data, dict) else task_data
+        
         plan_data = payload["plan"]
         plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
+        
+        evidence_data = payload.get("evidence", [])
+        evidence = [EvidenceItem(**e) if isinstance(e, dict) else e for e in evidence_data]
+        topic = payload["topic"]
+        mode = payload.get("mode", "closed_book")
 
         bullets_text = "\n- " + "\n- ".join(task.bullets)
+
+        evidence_text = ""
+        if evidence:
+            evidence_text = "\n".join(
+                f"- {e.title} | {e.url} | {e.published_at or 'date:unknown'}".strip()
+                for e in evidence[:20]
+            )
+
         response = await self.llm.ainvoke(
             [
-                SystemMessage(
-        content=(
-        GENERATOR_PROMPT
-        )
-    )
-    ,
+                SystemMessage(content=GENERATOR_PROMPT),
                 HumanMessage(
                     content=(
-                        f"Blog: {plan.blog_title}\n"
+                        f"Blog title: {plan.blog_title}\n"
                         f"Audience: {plan.audience}\n"
                         f"Tone: {plan.tone}\n"
-                        f"Topic: {topic}\n\n"
-                        f"Section: {task.title}\n"
-                        f"Section type: {task.section_type}\n"
+                        f"Blog kind: {plan.blog_kind}\n"
+                        f"Constraints: {plan.constraints}\n"
+                        f"Topic: {topic}\n"
+                        f"Mode: {mode}\n\n"
+                        f"Section title: {task.title}\n"
                         f"Goal: {task.goal}\n"
                         f"Target words: {task.target_words}\n"
-                        f"Bullets:{bullets_text}\n"
+                        f"Tags: {task.tags}\n"
+                        f"requires_research: {task.requires_research}\n"
+                        f"requires_citations: {task.requires_citations}\n"
+                        f"requires_code: {task.requires_code}\n"
+                        f"Bullets:{bullets_text}\n\n"
+                        f"Evidence (ONLY use these URLs when citing):\n{evidence_text}\n"
                     )
                 ),
             ]
         )
         section_md = response.content.strip()
 
-        return {"sections": [section_md]}
-    
+        return {"sections": [(task.id, section_md)]}
       
     async def reducer(self, state: BlogAgentState) -> dict:
         plan_data = state["plan"]
         plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
         
         title = plan.blog_title
-        body = "\n\n".join(state["sections"]).strip()
+        
+        # Sort sections by task ID and extract the markdown content
+        sorted_sections = sorted(state["sections"], key=lambda x: x[0])
+        body = "\n\n".join(section_md for _, section_md in sorted_sections).strip()
         
         final_md = f"# {title}\n\n{body}\n"
 
@@ -341,7 +352,10 @@ async def main():
     load_dotenv()
     
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    # Use gemma-7b-it model (free, available on Groq)
+    llm = ChatGroq(api_key=GROQ_API_KEY, model="meta-llama/llama-4-scout-17b-16e-instruct")
+    # llm = ChatGoogleGenerativeAI(api_key=GEMINI_API_KEY, model="gemini-2.0-flash")
     checkpointer = InMemorySaver()
 
     
@@ -353,7 +367,7 @@ async def main():
     compiled_graph = await agent.initialize_graph()
     # Run the agent asynchronously
     result = await compiled_graph.ainvoke({
-        "prompt": "Create a blog on the career of Mia khalifa her size,success,fame and current status",
+        "prompt": "create a blog on python library numpy only make 1 querry",
         "tone": "informative",
         "recency_days": 7,
         "as_of": today

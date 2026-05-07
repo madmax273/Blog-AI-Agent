@@ -21,12 +21,12 @@ class Task(BaseModel):
         ...,
         description="Target word count for this section (120–450).",
     )
-    section_type: Literal[
-        "intro", "core", "examples", "checklist", "common_mistakes", "conclusion"
-    ] = Field(
-        ...,
-        description="Use 'common_mistakes' exactly once in the plan.",
-    )
+    target_words: int = Field(..., description="Target word count for this section (120–550).")
+
+    tags: List[str] = Field(default_factory=list)
+    requires_research: bool = False
+    requires_citations: bool = False
+    requires_code: bool = False
 
 class Plan(BaseModel):
     blog_title: str
@@ -40,10 +40,7 @@ class Plan(BaseModel):
 class RouterOutput(BaseModel):
     needs_research: bool = Field(..., description="Must be a boolean: True or False (not a string)")
     mode: Literal["closed_book", "hybrid", "open_book"] = Field(..., description="One of: closed_book, hybrid, open_book")
-    reason: str = Field(..., description="Explanation for the routing decision")
     queries: List[str] = Field(default_factory=list, description="List of search queries if needs_research is true")
-    max_results_per_query: int = Field(5, description="How many results to fetch per query (3–8).")
-
 
 class EvidenceItem(BaseModel):
     title: str
@@ -55,18 +52,31 @@ class EvidenceItem(BaseModel):
 class EvidencePack(BaseModel):
     items: List[EvidenceItem]
 
+class ImageSpec(BaseModel):
+    placeholder: str = Field(..., description="e.g. [[IMAGE_1]]")
+    filename: str = Field(..., description="Save under images/, e.g. qkv_flow.png")
+    alt: str
+    caption: str
+    prompt: str = Field(..., description="Prompt to send to the image model.")
+    size: Literal["1024x1024", "1024x1536", "1536x1024"] = "1024x1024"
+    quality: Literal["low", "medium", "high"] = "medium"
+
+
+class GlobalImagePlan(BaseModel):
+    md_with_placeholders: str
+    images: List[ImageSpec] = Field(default_factory=list)
+
 class BlogAgentState(TypedDict):
     prompt: str
     
     approval: str
     tone: str
     content: str
-    markdown_content: str
     topic: str
     as_of: str   # ISO date, e.g. "2026-01-29"
     
     #fanout
-    sections: Annotated[List[str], operator.add]  # reducer concatenates worker outputs
+    sections: Annotated[List[tuple[int, str]], operator.add]  # (task_id, section_md)
 
 
     #plan
@@ -81,3 +91,10 @@ class BlogAgentState(TypedDict):
     mode:Literal["closed_book","open_book","hybrid"]
     queries: List[str]
     needs_research: bool 
+
+    #reducer
+    merged_md: str
+    md_with_placeholders: str
+    image_specs: List[dict]
+    markdown_content: str
+
