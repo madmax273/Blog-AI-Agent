@@ -70,13 +70,13 @@ class GlobalImagePlan(BaseModel):
 
 class BlogAgentState(TypedDict):
     prompt: str
-    
+
     approval: str
     tone: str
     content: str
     topic: str
     as_of: str   # ISO date, e.g. "2026-01-29"
-    
+
     #fanout
     sections: Annotated[List[tuple[int, str]], operator.add]  # (task_id, section_md)
 
@@ -84,19 +84,22 @@ class BlogAgentState(TypedDict):
     #plan
     plan: Plan
 
-    #research    
+    #research
     evidence: List[EvidenceItem]
-    
+
 
     #router
     recency_days: int    # 7 for weekly news, 30 for hybrid, etc.
     mode:Literal["closed_book","open_book","hybrid"]
     queries: List[str]
-    needs_research: bool 
+    needs_research: bool
 
     #reducer
     merged_md: str
     md_with_placeholders: str
     image_specs: List[dict]
     markdown_content: str
+
+    #error tracking
+    error: Optional[str]
 

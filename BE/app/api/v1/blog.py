@@ -18,9 +18,12 @@ from langchain_groq import ChatGroq
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from config.settings import settings
+from config.logging import get_logger
 from sqlalchemy.orm import Session
 from database.connection import get_db, SessionLocal
 from database.models import BlogThread
+
+logger = get_logger("blog_api")
 
 router = APIRouter()
 
@@ -74,7 +77,7 @@ async def run_agent_background(agent: BlogAgent, thread_id: str, inputs: dict):
                 finally:
                     db.close()
     except Exception as e:
-        print(f"Error in background execution: {e}")
+        logger.log_error_with_context(e, "Error in background execution")
 
 @router.post("/generate")
 async def generate_blog(req: GenerateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -112,6 +115,7 @@ async def get_status(thread_id: str):
     try:
         state_snapshot = await graph.aget_state(config)
     except Exception as e:
+        logger.log_error_with_context(e, "Error getting status")
         return {"status": "error", "message": str(e)}
 
     if not state_snapshot:
@@ -142,8 +146,8 @@ async def get_status(thread_id: str):
             "queries": values.get("queries"),
             "recency_days": values.get("recency_days"),
             "topic": values.get("topic"),
-            "sections": values.get("sections")
-        
+            "sections": values.get("sections"),
+            "error": values.get("error")
         }
         
     return {
@@ -180,7 +184,7 @@ async def resume_blog(thread_id: str, req: ResumeRequest, background_tasks: Back
                     finally:
                         db.close()
         except Exception as e:
-            print(f"Error in background resume: {e}")
+            logger.log_error_with_context(e, "Error in background resume")
             
     background_tasks.add_task(resume_agent_background)
     
