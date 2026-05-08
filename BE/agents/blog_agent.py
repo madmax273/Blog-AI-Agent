@@ -18,8 +18,8 @@ from typing import List
 
 
 from langgraph.types import interrupt,Command
-from typing_extensions import   TypedDict
-from langgraph.checkpoint.memory import InMemorySaver
+from typing_extensions import TypedDict
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from Model.agent_models import BlogAgentState,Plan,RouterOutput,EvidencePack,EvidenceItem,Task
 from utils.agent_prompts import PLANNING_PROMPT,GENERATOR_PROMPT,ROUTER_PROMPT,RESEARCH_PROMPT
 from dotenv import load_dotenv
@@ -81,7 +81,7 @@ def route_next(state: BlogAgentState) -> str:
 
 class BlogAgent:
     
-    def __init__(self, api_key: str, llm: ChatGroq, checkpointer: InMemorySaver):
+    def __init__(self, api_key: str, llm: ChatGroq, checkpointer: BaseCheckpointSaver):
         self.graph = None
         self.api_key = api_key
         self.compiled_graph = None
@@ -312,9 +312,9 @@ class BlogAgent:
         final_md = f"# {title}\n\n{body}\n"
 
         # Save to file
-        filename = "".join(c if c.isalnum() or c in (" ", "_", "-") else "" for c in title)
-        filename = filename.strip().lower().replace(" ", "_") + ".md"
-        Path(filename).write_text(final_md, encoding="utf-8")
+        # filename = "".join(c if c.isalnum() or c in (" ", "_", "-") else "" for c in title)
+        # filename = filename.strip().lower().replace(" ", "_") + ".md"
+        # Path(filename).write_text(final_md, encoding="utf-8")
 
         return {"markdown_content": final_md}
        
@@ -337,8 +337,8 @@ class BlogAgent:
         graph.add_conditional_edges("hitl", self.fanout, ["worker"])
         graph.add_edge("worker", "reducer")
         graph.add_edge("reducer", END)
-        checkpoint = InMemorySaver()
-        compiled_graph= graph.compile(checkpointer=checkpoint)
+        
+        compiled_graph= graph.compile(checkpointer=self.checkpointer)
         return compiled_graph
     
 
@@ -356,7 +356,11 @@ async def main():
     # Use gemma-7b-it model (free, available on Groq)
     llm = ChatGroq(api_key=GROQ_API_KEY, model="meta-llama/llama-4-scout-17b-16e-instruct")
     # llm = ChatGoogleGenerativeAI(api_key=GEMINI_API_KEY, model="gemini-2.0-flash")
-    checkpointer = InMemorySaver()
+    
+    import aiosqlite
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    conn = aiosqlite.connect("blog_agent_checkpoints.db")
+    checkpointer = AsyncSqliteSaver(conn)
 
     
     

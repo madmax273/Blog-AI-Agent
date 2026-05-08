@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "logs"
-    LOG_ROTATION_DAYS: int = 30
+    LOG_ROTATION_DAYS: int = 10
     
     class Config:
         env_file = ".env"

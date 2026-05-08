@@ -4,6 +4,8 @@ import operator
 
 
 class Task(BaseModel):
+    """Task model for blog generation"""
+    
     id: int
     title: str
 
