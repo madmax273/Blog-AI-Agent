@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -22,6 +23,14 @@ export function PromptInput({
   onGenerate,
   isGenerating,
 }: PromptInputProps) {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const isDisabled = mounted ? (isGenerating || !value.trim()) : false
+
   return (
     <div className="space-y-4 sm:space-y-5">
       {/* Neumorphic textarea container */}
@@ -67,7 +76,7 @@ export function PromptInput({
         </div>
         <Button
           onClick={onGenerate}
-          disabled={isGenerating || !value.trim()}
+          disabled={isDisabled}
           className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-5 sm:px-6 py-2.5 gap-2 text-sm font-medium w-full sm:w-auto"
           style={{
             boxShadow: '4px 4px 12px rgba(99, 102, 241, 0.3), -2px -2px 8px rgba(255, 255, 255, 0.8)',

@@ -16,7 +16,7 @@ export function ArticlePreview({ title, tags, content, imageUrl }: ArticlePrevie
     <div className="relative">
       {/* Neumorphic article card - same width as prompt box */}
       <article 
-        className="rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-[680px]"
+        className="rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 w-full"
         style={{
           background: 'linear-gradient(145deg, #ffffff, #f8f8fc)',
           boxShadow: '8px 8px 20px #d8d8e5, -8px -8px 20px #ffffff',
