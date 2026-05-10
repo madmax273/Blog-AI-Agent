@@ -99,6 +99,7 @@ class BlogAgentState(TypedDict):
     md_with_placeholders: str
     image_specs: List[dict]
     markdown_content: str
+    html_content: str
 
     #error tracking
     error: Optional[str]

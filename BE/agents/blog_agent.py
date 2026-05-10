@@ -376,12 +376,32 @@ class BlogAgent:
             final_md = f"# {title}\n\n{body}\n"
             logger.info(f"Reducer merged {len(sorted_sections)} sections")
 
-            return {"markdown_content": final_md, "error": None}
+            # Convert markdown to HTML
+            import markdown2
+            final_html = markdown2.markdown(
+                final_md,
+                extras=[
+                    "fenced-code-blocks",
+                    "tables",
+                    "header-ids",
+                    "strike",
+                    "target-blank-links",
+                    "nofollow",
+                    "toc",
+                    "smarty-pants"
+                ]
+            )
+            logger.info("Converted markdown to HTML in reducer")
+            logger.debug(f"HTML preview: {final_html[:500]}...")
+
+            return {"markdown_content": final_md, "html_content": final_html, "error": None}
         except Exception as e:
             logger.log_error_with_context(e, "Error in reducer")
             # Return fallback markdown on error
             fallback_md = f"# Error\n\nAn error occurred while generating the blog: {str(e)}"
-            return {"markdown_content": fallback_md, "error": str(e)}
+            import markdown2
+            fallback_html = markdown2.markdown(fallback_md, extras=["fenced-code-blocks", "tables", "header-ids"])
+            return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e)}
        
 
 
