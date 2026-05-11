@@ -1,19 +1,26 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/blog-ai/header"
+import { Navbar } from "@/components/blog-ai/navbar"
 import { PromptInput } from "@/components/blog-ai/prompt-input"
 import { ArticlePreview } from "@/components/blog-ai/article-preview"
 import { PlanPreview } from "@/components/blog-ai/plan-preview"
-import ReactMarkdown from 'react-markdown'
+import { AuthModal } from "@/components/auth-modal"
+import { QuotaModal } from "@/components/quota-modal"
+import { useAuthStore } from "@/stores/authStore"
+import { Button } from "@/components/ui/button"
 
 const API_BASE = "http://localhost:8000/api/v1/blog"
-const USER_ID_TEST = process.env.NEXT_PUBLIC_USER_ID_TEST || "user-1"
 
 export default function BlogAIPage() {
+  const router = useRouter()
+  const { user, token, quota, isAuthenticated, isLoading: authLoading, refreshQuota } = useAuthStore()
   const [prompt, setPrompt] = useState("")
   const [tone, setTone] = useState("Professional")
-  const [userId] = useState(USER_ID_TEST)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showQuotaModal, setShowQuotaModal] = useState(false)
   
   // App States: idle -> generating_plan -> awaiting_approval -> generating_article -> completed
   const [status, setStatus] = useState("idle")
@@ -26,6 +33,56 @@ export default function BlogAIPage() {
   
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Load state from localStorage on mount
+  useEffect(() => {
+    const savedState = localStorage.getItem('blogState')
+    if (savedState) {
+      try {
+        const state = JSON.parse(savedState)
+        setPrompt(state.prompt || "")
+        setTone(state.tone || "Professional")
+        setStatus(state.status || "idle")
+        setThreadId(state.threadId || null)
+        setPlan(state.plan || null)
+        setArticleContent(state.articleContent || null)
+        setArticleTitle(state.articleTitle || "")
+        
+        // Resume polling if status is not idle or completed
+        if (state.threadId && (state.status === "generating_plan" || state.status === "generating_article")) {
+          startPolling(state.threadId)
+        }
+      } catch (err) {
+        console.error("Error loading state from localStorage:", err)
+      }
+    }
+  }, [])
+
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    const state = {
+      prompt,
+      tone,
+      status,
+      threadId,
+      plan,
+      articleContent,
+      articleTitle
+    }
+    localStorage.setItem('blogState', JSON.stringify(state))
+  }, [prompt, tone, status, threadId, plan, articleContent, articleTitle])
+
+  const handleClear = () => {
+    setPrompt("")
+    setTone("Professional")
+    setStatus("idle")
+    setThreadId(null)
+    setPlan(null)
+    setArticleContent(null)
+    setArticleTitle("")
+    stopPolling()
+    localStorage.removeItem('blogState')
+  }
+
   const stopPolling = () => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current)
@@ -35,7 +92,11 @@ export default function BlogAIPage() {
 
   const pollStatus = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/status/${id}`)
+      const res = await fetch(`${API_BASE}/status/${id}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
       const data = await res.json()
       
       if (data.status === "awaiting_approval") {
@@ -44,10 +105,12 @@ export default function BlogAIPage() {
         stopPolling()
       } else if (data.status === "completed") {
         setStatus("completed")
-        setArticleContent(data.markdown_content)
+        // Use html_content if available, fallback to markdown_content
+        setArticleContent(data.html_content || data.markdown_content)
         setArticleTitle(data.topic || "Generated Article")
         stopPolling()
         fetchUserThreads() // Refresh threads after completion
+        refreshQuota() // Refresh quota after completion
       } else if (data.status === "error") {
         setStatus("idle")
         alert("An error occurred during generation.")
@@ -64,26 +127,48 @@ export default function BlogAIPage() {
   }
 
   const fetchUserThreads = async () => {
-    if (!userId) return
+    if (!user) return
     setIsLoadingThreads(true)
     try {
-      const res = await fetch(`${API_BASE}/threads/${userId}`)
+      const res = await fetch(`${API_BASE}/threads`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) {
+        console.error("Threads API error:", res.status, res.statusText)
+        setUserThreads([])
+        return
+      }
       const data = await res.json()
       setUserThreads(data.threads || [])
     } catch (err) {
       console.error("Error fetching user threads:", err)
+      setUserThreads([])
     } finally {
       setIsLoadingThreads(false)
     }
   }
 
   useEffect(() => {
-    fetchUserThreads()
+    if (isAuthenticated && user) {
+      fetchUserThreads()
+    }
     return () => stopPolling()
-  }, [userId])
+  }, [user, isAuthenticated])
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return
+    
+    // Check authentication
+    if (!isAuthenticated || !user) {
+      setShowAuthModal(true)
+      return
+    }
+
+    // Check quota
+    if (quota && quota.blogs_remaining <= 0) {
+      setShowQuotaModal(true)
+      return
+    }
     
     setStatus("generating_plan")
     setPlan(null)
@@ -92,8 +177,11 @@ export default function BlogAIPage() {
     try {
       const res = await fetch(`${API_BASE}/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, tone, recency_days: 7, user_id: userId })
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt, tone, recency_days: 7 })
       })
       const data = await res.json()
       
@@ -115,7 +203,10 @@ export default function BlogAIPage() {
     try {
       await fetch(`${API_BASE}/resume/${threadId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({ approval: approvalStatus, suggestions: feedback })
       })
       
@@ -124,14 +215,6 @@ export default function BlogAIPage() {
       console.error("Resume error:", err)
       setStatus("awaiting_approval") // revert on error
     }
-  }
-
-  const handleClear = () => {
-    setPrompt("")
-    setStatus("idle")
-    setPlan(null)
-    setArticleContent(null)
-    stopPolling()
   }
 
   const handleCopy = () => {
@@ -144,12 +227,23 @@ export default function BlogAIPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      <Navbar />
       <div className="mx-auto px-4 sm:px-6 lg:px-8 pb-8 w-full max-w-[1400px]">
         {/* Header and Prompt Area */}
-        <div className="mx-auto transition-all duration-300 flex justify-center w-full gap-6">
-          <div className="hidden lg:block lg:w-[25%] xl:w-[20%] shrink-0"></div>
-          <div className="w-full lg:w-[50%] xl:w-[55%] shrink-0 space-y-6">
-            <Header onClear={handleClear} onCopy={handleCopy} />
+        <div className="mx-auto transition-all duration-300 flex justify-center w-full">
+          <div className="w-full max-w-3xl space-y-6">
+            <div className="flex items-center justify-between">
+              <Header onClear={handleClear} onCopy={handleCopy} />
+              {(status !== "idle" || plan || articleContent) && (
+                <Button 
+                  size="sm"
+                  onClick={handleClear}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Create New
+                </Button>
+              )}
+            </div>
             <PromptInput
               value={prompt}
               onChange={setPrompt}
@@ -159,42 +253,13 @@ export default function BlogAIPage() {
               isGenerating={isGenerating}
             />
           </div>
-          <div className="hidden lg:block lg:w-[25%] xl:w-[25%] shrink-0"></div>
         </div>
         
         {/* Main Content Area */}
         <main className="mx-auto mt-6 flex flex-col lg:flex-row items-start gap-6 transition-all duration-300 justify-center w-full">
           
-          {/* Left Sidebar (Previous Blogs) */}
-          <aside className="hidden lg:block w-full lg:w-[25%] xl:w-[20%] shrink-0 space-y-4 sticky top-6">
-            <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider mb-4 px-1">Previous Blogs</h3>
-            <div className="space-y-5">
-               {isLoadingThreads ? (
-                 <div className="text-center py-8 text-sm text-muted-foreground animate-pulse">
-                   Loading threads...
-                 </div>
-               ) : userThreads.length === 0 ? (
-                 <div className="text-center py-8 text-sm text-muted-foreground">
-                   No previous threads
-                 </div>
-               ) : (
-                 userThreads.map((thread: any) => (
-                  <div key={thread.thread_id} className="flex flex-col rounded-2xl overflow-hidden bg-background border border-border shadow-sm hover:shadow-md cursor-pointer transition-all hover:border-primary/30 group">
-                     <div className="w-full h-32 overflow-hidden">
-                       <img src="/images/workspace.jpg" alt={thread.topic} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                     </div>
-                     <div className="p-4 bg-card relative">
-                       <p className="text-sm font-semibold text-foreground leading-snug line-clamp-2">{thread.topic || "Untitled Thread"}</p>
-                       <p className="text-xs text-muted-foreground mt-2">{thread.created_at || "Recently"}</p>
-                     </div>
-                  </div>
-                 ))
-               )}
-            </div>
-          </aside>
-
           {/* Center Column (Main Content) */}
-          <div className="w-full lg:w-[50%] xl:w-[55%] shrink-0 space-y-5 sm:space-y-6">
+          <div className={`w-full space-y-5 sm:space-y-6 ${plan ? 'lg:w-[66%]' : 'lg:w-full max-w-3xl mx-auto'}`}>
             
             {status === "generating_plan" && (
               <div className="text-center py-8 text-sm text-muted-foreground animate-pulse">
@@ -213,7 +278,7 @@ export default function BlogAIPage() {
                 <ArticlePreview
                   title={articleTitle || "Generated Article"}
                   tags={["AI GENERATED", tone.toUpperCase()]}
-                  content={articleContent.split('\n\n').filter(p => p.trim() !== '')} 
+                  content={articleContent}
                   imageUrl="/images/workspace.jpg"
                 />
               </div>
@@ -222,7 +287,7 @@ export default function BlogAIPage() {
 
           {/* Right Sidebar (Plan or Spacer) */}
           {plan ? (
-            <aside className="w-full lg:w-[25%] xl:w-[25%] shrink-0 sticky top-6">
+            <aside className="w-full lg:w-[33%] shrink-0 sticky top-6">
               <PlanPreview 
                 plan={plan} 
                 onApprove={(feedback) => handleApproval("approved", feedback)}
@@ -230,22 +295,22 @@ export default function BlogAIPage() {
                 isReadOnly={status === "generating_article" || status === "completed"}
               />
             </aside>
-          ) : (
-            <div className="hidden lg:block lg:w-[25%] xl:w-[25%] shrink-0"></div>
-          )}
+          ) : null}
         </main>
 
         {/* Footer Area */}
-        <div className="mx-auto transition-all duration-300 flex justify-center w-full gap-6 mt-10 sm:mt-12">
-          <div className="hidden lg:block lg:w-[25%] xl:w-[20%] shrink-0"></div>
-          <footer className="w-full lg:w-[50%] xl:w-[55%] shrink-0 text-center">
+        <div className="mx-auto transition-all duration-300 flex justify-center w-full mt-10 sm:mt-12">
+          <footer className="w-full max-w-3xl text-center">
             <p className="text-[10px] sm:text-xs text-muted-foreground">
               Generated with editorial precision by BlogAI. No tracking, no distractions.
             </p>
           </footer>
-          <div className="hidden lg:block lg:w-[25%] xl:w-[25%] shrink-0"></div>
         </div>
       </div>
+
+      {/* Modals */}
+      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+      <QuotaModal isOpen={showQuotaModal} onClose={() => setShowQuotaModal(false)} quota={quota || undefined} />
     </div>
   )
 }

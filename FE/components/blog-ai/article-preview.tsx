@@ -7,7 +7,7 @@ import Image from "next/image"
 interface ArticlePreviewProps {
   title: string
   tags: string[]
-  content: string[]
+  content: string
   imageUrl: string
 }
 
@@ -39,44 +39,21 @@ export function ArticlePreview({ title, tags, content, imageUrl }: ArticlePrevie
         </div>
         
         <div className="w-full h-px bg-border/60 mb-5" />
-        
-        <div className="space-y-4 text-foreground/80 text-xs sm:text-sm leading-relaxed">
-          {content.slice(0, 2).map((paragraph, index) => (
-            <p key={index}>{paragraph}</p>
-          ))}
-        </div>
 
-        <div 
-          className="my-5 sm:my-6 rounded-xl sm:rounded-2xl overflow-hidden"
-          style={{
-            boxShadow: '4px 4px 12px #d8d8e5, -4px -4px 12px #ffffff',
-          }}
-        >
-          <Image
-            src={imageUrl}
-            alt="Article illustration"
-            width={600}
-            height={400}
-            className="w-full h-auto object-cover"
-          />
-        </div>
-
-        <div className="space-y-4 text-foreground/80 text-xs sm:text-sm leading-relaxed">
-          {content.slice(2).map((paragraph, index) => (
-            <p key={index}>{paragraph}</p>
-          ))}
-        </div>
-
-        {content.length > 2 && (
-          <>
-            <h2 className="text-lg sm:text-xl font-semibold text-foreground mt-5 sm:mt-6 mb-3">
-              The Synthesis of Man and Machine
-            </h2>
-            <p className="text-foreground/80 text-xs sm:text-sm leading-relaxed">
-              The emotional response to a well-crafted piece of journalism should be one of competence and clarity. When the UI is invisible, the message becomes unavoidable. This is the core tenet of modern productivity software—tools that empower without intruding.
-            </p>
-          </>
-        )}
+        <div
+          className="prose prose-sm sm:prose prose-base max-w-none text-foreground/80 leading-relaxed
+                     prose-headings:font-semibold prose-headings:text-foreground
+                     prose-h1:text-2xl sm:prose-h1:text-3xl prose-h1:mb-4 prose-h1:mt-6
+                     prose-h2:text-xl sm:prose-h2:text-2xl prose-h2:mb-3 prose-h2:mt-5
+                     prose-h3:text-lg sm:prose-h3:text-xl prose-h3:mb-2 prose-h3:mt-4
+                     prose-p:text-xs sm:prose-p:text-sm prose-p:mb-4
+                     prose-ul:list-disc prose-ul:pl-6 prose-ul:mb-4 prose-ul:space-y-2
+                     prose-li:text-xs sm:prose-li:text-sm
+                     prose-a:text-primary prose-a:no-underline hover:prose-a:underline
+                     prose-strong:text-foreground prose-strong:font-semibold
+                     prose-code:text-xs sm:prose-code:text-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded"
+          dangerouslySetInnerHTML={{ __html: content }}
+        />
       </article>
 
       {/* Floating action buttons - positioned outside the card on desktop */}
