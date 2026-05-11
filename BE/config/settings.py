@@ -26,8 +26,10 @@ class Settings(BaseSettings):
     
     # Security settings
     SECRET_KEY: str = "your-secret-key-here-change-in-production"
+    JWT_SECRET: str = "your-jwt-secret-key-here-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # CORS settings
     ALLOWED_HOSTS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -39,6 +41,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "logs"
     LOG_ROTATION_DAYS: int = 10
+
+    # Unsplash settings
+    UNSPLASH_ACCESS_KEY: Optional[str] = None
+    UNSPLASH_SECRET_KEY: Optional[str] = None
+    
     
     class Config:
         env_file = ".env"

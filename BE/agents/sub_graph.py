@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 from langchain_core.messages import SystemMessage, HumanMessage
 from config.logging import get_logger
+import markdown2
 
 logger = get_logger("sub_graph")
 
@@ -204,13 +205,45 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
             logger.log_error_with_context(e, "Error saving blog.md")
             # Continue even if file save fails
 
-        return {"markdown_content": md, "error": None}
+        # Convert markdown to HTML
+        try:
+            html = markdown2.markdown(
+                md,
+                extras=[
+                    "fenced-code-blocks",
+                    "tables",
+                    "header-ids",
+                    "strike",
+                    "target-blank-links",
+                    "nofollow",
+                    "toc",
+                    "smarty-pants"
+                ]
+            )
+            logger.info(f"Converted markdown to HTML, length: {len(html)}")
+            logger.info(f"HTML starts with: {html[:200]}")
+            logger.info(f"Markdown starts with: {md[:200]}")
+        except Exception as e:
+            logger.log_error_with_context(e, "Error converting markdown to HTML")
+            html = md  # Fallback to markdown if conversion fails
+
+        # Save HTML file
+        try:
+            with open("blog.html", "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.info("Blog HTML saved to blog.html")
+        except Exception as e:
+            logger.log_error_with_context(e, "Error saving blog.html")
+            # Continue even if file save fails
+
+        return {"markdown_content": md, "html_content": html, "error": None}
     except Exception as e:
         logger.log_error_with_context(e, "Error in generate_and_place_images")
         # Fallback: return merged markdown without images
         logger.warning("Falling back to merged markdown without images")
         fallback_md = state.get("merged_md", "# Error\n\nFailed to generate blog with images.")
-        return {"markdown_content": fallback_md, "error": str(e)}
+        fallback_html = markdown2.markdown(fallback_md, extras=["fenced-code-blocks", "tables", "header-ids"])
+        return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e)}
 
 
 def create_reducer_subgraph(llm):

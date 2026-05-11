@@ -21,7 +21,8 @@ from config.settings import settings
 from config.logging import get_logger
 from sqlalchemy.orm import Session
 from database.connection import get_db, SessionLocal
-from database.models import BlogThread
+from database.models import BlogThread, User
+from app.api.v1.auth import get_current_user, check_blog_quota, increment_blog_count, get_user_quota_status
 
 logger = get_logger("blog_api")
 
@@ -50,7 +51,6 @@ class GenerateRequest(BaseModel):
     prompt: str
     tone: str
     recency_days: Optional[int] = 7
-    user_id: str = "anonymous"
 
 class ResumeRequest(BaseModel):
     approval: str  # "approved" or "rejected"
@@ -61,18 +61,30 @@ async def run_agent_background(agent: BlogAgent, thread_id: str, inputs: dict):
     graph = await agent.initialize_graph()
     try:
         await graph.ainvoke(inputs, config=config)
-        
+
         # Check if completed without interruption
         state_snapshot = await graph.aget_state(config)
         if state_snapshot and not getattr(state_snapshot, "next", []):
-            if "markdown_content" in state_snapshot.values:
+            if "html_content" in state_snapshot.values:
                 # Save to DB
                 db = SessionLocal()
                 try:
                     db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
                     if db_thread:
-                        db_thread.content = state_snapshot.values["markdown_content"]
+                        db_thread.content = state_snapshot.values["html_content"]
+                        db_thread.markdown_content = state_snapshot.values.get("markdown_content")
                         db_thread.status = "completed"
+
+                        # Increment blog count for user
+                        user = db.query(User).filter(User.id == int(db_thread.user_id)).first()
+                        if user:
+                            word_count = len(state_snapshot.values.get("markdown_content", "").split())
+                            logger.info(f"Incrementing blog count for user {user.id}, word_count: {word_count}")
+                            increment_blog_count(user, word_count=word_count, db=db)
+                            logger.info(f"Blog count incremented successfully")
+                        else:
+                            logger.warning(f"User not found for thread {thread_id}")
+
                         db.commit()
                 finally:
                     db.close()
@@ -80,20 +92,31 @@ async def run_agent_background(agent: BlogAgent, thread_id: str, inputs: dict):
         logger.log_error_with_context(e, "Error in background execution")
 
 @router.post("/generate")
-async def generate_blog(req: GenerateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def generate_blog(req: GenerateRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check if user has exceeded their quota
+    if not check_blog_quota(current_user, db):
+        quota_status = get_user_quota_status(current_user, db)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "Blog generation limit exceeded",
+                "quota": quota_status
+            }
+        )
+
     agent = await get_agent()
     thread_id = str(uuid.uuid4())
-    
+
     # Save thread to DB
     db_thread = BlogThread(
         thread_id=thread_id,
-        user_id=req.user_id,
+        user_id=str(current_user.id),
         topic=req.prompt,
         status="processing"
     )
     db.add(db_thread)
     db.commit()
-    
+
     today = datetime.now().strftime("%Y-%m-%d")
     inputs = {
         "prompt": req.prompt,
@@ -101,17 +124,25 @@ async def generate_blog(req: GenerateRequest, background_tasks: BackgroundTasks,
         "recency_days": req.recency_days,
         "as_of": today
     }
-    
+
     background_tasks.add_task(run_agent_background, agent, thread_id, inputs)
-    
+
     return {"thread_id": thread_id, "status": "started"}
 
 @router.get("/status/{thread_id}")
-async def get_status(thread_id: str):
+async def get_status(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check if thread belongs to current user
+    db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
+    if not db_thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    if db_thread.user_id != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     agent = await get_agent()
     graph = await agent.initialize_graph()
     config = {"configurable": {"thread_id": thread_id}}
-    
+
     try:
         state_snapshot = await graph.aget_state(config)
     except Exception as e:
@@ -125,19 +156,22 @@ async def get_status(thread_id: str):
         is_interrupted = any(bool(task.interrupts) for task in state_snapshot.tasks)
     else:
         is_interrupted = bool(state_snapshot.next and state_snapshot.next[0] == "hitl")
-        
+
     values = state_snapshot.values
-    
+
     if is_interrupted:
         return {
             "status": "awaiting_approval",
             "plan": values.get("plan"),
             "topic": values.get("topic")
         }
-    
-    if not is_interrupted and "markdown_content" in values:
+
+    if not is_interrupted and "html_content" in values:
+        logger.info(f"Returning html_content, length: {len(values.get('html_content', ''))}")
+        logger.info(f"html_content preview: {values.get('html_content', '')[:200]}")
         return {
             "status": "completed",
+            "html_content": values.get("html_content"),
             "markdown_content": values.get("markdown_content"),
             "plan": values.get("plan"),
             "evidence": values.get("evidence"),
@@ -149,57 +183,99 @@ async def get_status(thread_id: str):
             "sections": values.get("sections"),
             "error": values.get("error")
         }
-        
+
     return {
         "status": "processing",
         "current_state": values.get("topic", "initializing")
     }
 
 @router.post("/resume/{thread_id}")
-async def resume_blog(thread_id: str, req: ResumeRequest, background_tasks: BackgroundTasks):
+async def resume_blog(thread_id: str, req: ResumeRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check if thread belongs to current user
+    db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
+    if not db_thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    if db_thread.user_id != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     agent = await get_agent()
     config = {"configurable": {"thread_id": thread_id}}
-    
+
     user_feedback_dict = {
         "approval": req.approval,
         "suggestions": req.suggestions
     }
-    
+
     async def resume_agent_background():
         graph = await agent.initialize_graph()
         try:
             await graph.ainvoke(Command(resume=user_feedback_dict), config=config)
-            
+
             # Check if completed
             state_snapshot = await graph.aget_state(config)
             if state_snapshot and not getattr(state_snapshot, "next", []):
-                if "markdown_content" in state_snapshot.values:
+                if "html_content" in state_snapshot.values:
                     db = SessionLocal()
                     try:
                         db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
                         if db_thread:
-                            db_thread.content = state_snapshot.values["markdown_content"]
+                            db_thread.content = state_snapshot.values["html_content"]
+                            db_thread.markdown_content = state_snapshot.values.get("markdown_content")
                             db_thread.status = "completed"
+
+                            # Increment blog count for user
+                            user = db.query(User).filter(User.id == int(db_thread.user_id)).first()
+                            if user:
+                                # Estimate word count from markdown content
+                                word_count = len(state_snapshot.values.get("markdown_content", "").split())
+                                logger.info(f"Incrementing blog count for user {user.id}, word_count: {word_count}")
+                                increment_blog_count(user, word_count=word_count, db=db)
+                                logger.info(f"Blog count incremented successfully")
+                            else:
+                                logger.warning(f"User not found for thread {thread_id}")
+
                             db.commit()
                     finally:
                         db.close()
         except Exception as e:
             logger.log_error_with_context(e, "Error in background resume")
-            
+
     background_tasks.add_task(resume_agent_background)
-    
+
     return {"status": "resumed"}
 
-@router.get("/threads/{user_id}")
-async def get_user_threads(user_id: str, db: Session = Depends(get_db)):
-    threads = db.query(BlogThread).filter(BlogThread.user_id == user_id).order_by(BlogThread.created_at.desc()).all()
+@router.get("/threads")
+async def get_user_threads(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    threads = db.query(BlogThread).filter(BlogThread.user_id == str(current_user.id)).order_by(BlogThread.created_at.desc()).all()
     return {
         "threads": [
             {
                 "thread_id": t.thread_id,
                 "topic": t.topic,
                 "status": t.status,
-                "created_at": t.created_at
+                "created_at": t.created_at,
+                "content": t.content,
+                "markdown_content": t.markdown_content,
             } for t in threads
         ]
+    }
+
+@router.get("/threads/{thread_id}")
+async def get_thread_by_id(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get a single blog thread by ID"""
+    db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
+    if not db_thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    if db_thread.user_id != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return {
+        "thread_id": db_thread.thread_id,
+        "topic": db_thread.topic,
+        "status": db_thread.status,
+        "created_at": db_thread.created_at,
+        "content": db_thread.content,
+        "markdown_content": db_thread.markdown_content,
     }
