@@ -5,7 +5,7 @@ import operator
 
 class Task(BaseModel):
     """Task model for blog generation"""
-    
+
     id: int
     title: str
 
@@ -18,10 +18,6 @@ class Task(BaseModel):
         min_length=3,
         max_length=5,
         description="3–5 concrete, non-overlapping subpoints to cover in this section.",
-    )
-    target_words: int = Field(
-        ...,
-        description="Target word count for this section (120–450).",
     )
     target_words: int = Field(..., description="Target word count for this section (120–550).")
 
@@ -72,6 +68,7 @@ class BlogAgentState(TypedDict):
     prompt: str
 
     approval: str
+    suggestions: str  # User feedback for plan revision
     tone: str
     content: str
     topic: str

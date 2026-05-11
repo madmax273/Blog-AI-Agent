@@ -38,12 +38,25 @@ def _iso_to_date(date_str: str) -> date:
     except (ValueError, AttributeError):
         return None
 
-def check_approval(state: BlogAgentState)->str:
+def check_approval(state: BlogAgentState):
     """
     Check if the plan is approved or not
+    Returns Send objects for fanout if approved, or "planner" if rejected
     """
+    logger.info(f"check_approval: approval={state.get('approval')}")
     if state["approval"] == "approved":
-        return "generate"
+        # Return Send objects for fanout to workers
+        plan_data = state["plan"]
+        plan = Plan(**plan_data) if isinstance(plan_data, dict) else plan_data
+        evidence = state.get("evidence", [])
+        logger.info(f"Fanout: Creating {len(plan.tasks)} worker tasks")
+        return [
+            Send(
+                "worker",
+                {"task": task, "topic": state["topic"], "plan": plan, "mode": state.get("mode", "closed_book"), "evidence": evidence},
+            )
+            for task in plan.tasks
+        ]
     else:
         return "planner"
 
@@ -224,17 +237,22 @@ class BlogAgent:
             # Force blog_kind for open_book
             forced_kind = "news_roundup" if mode == "open_book" else None
 
+            # Include user suggestions if plan was rejected
+            suggestions = state.get("suggestions", "")
+            prompt_content = (
+                f"Topic: {state['topic']}\n"
+                f"Mode: {mode}\n"
+                f"Evidence (ONLY use for fresh claims; may be empty):\n"
+                f"{[e.model_dump() for e in evidence][:16]}\n\n"
+            )
+
+            if suggestions:
+                prompt_content += f"User feedback for revision: {suggestions}\n\n"
+
             plan = await planner.ainvoke(
                 [
                     SystemMessage(content=PLANNING_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Topic: {state['topic']}\n"
-                            f"Mode: {mode}\n"
-                            f"Evidence (ONLY use for fresh claims; may be empty):\n"
-                            f"{[e.model_dump() for e in evidence][:16]}\n\n"
-                        )
-                    ),
+                    HumanMessage(content=prompt_content),
                 ]
             )
 
@@ -280,9 +298,9 @@ class BlogAgent:
         logger.info(f"User feedback: {message_for_hitl}")
 
         if message_for_hitl["approval"] != "approved":
-            return {"approval": "rejected"}
+            return {"approval": "rejected", "suggestions": message_for_hitl.get("suggestions", "")}
 
-        return {"approval": "approved"}    
+        return {"approval": "approved", "suggestions": ""}    
     
     async def fanout(self,state: BlogAgentState):
         try:
@@ -431,7 +449,6 @@ class BlogAgent:
             graph.add_edge("research", "planner")
             graph.add_edge("planner", "hitl")
             graph.add_conditional_edges("hitl",check_approval)
-            graph.add_conditional_edges("hitl", self.fanout, ["worker"])
             graph.add_edge("worker", "reducer")
             graph.add_edge("reducer", END)
 
