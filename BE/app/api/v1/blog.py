@@ -254,7 +254,28 @@ async def get_user_threads(current_user: User = Depends(get_current_user), db: S
                 "thread_id": t.thread_id,
                 "topic": t.topic,
                 "status": t.status,
-                "created_at": t.created_at
+                "created_at": t.created_at,
+                "content": t.content,
+                "markdown_content": t.markdown_content,
             } for t in threads
         ]
+    }
+
+@router.get("/threads/{thread_id}")
+async def get_thread_by_id(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get a single blog thread by ID"""
+    db_thread = db.query(BlogThread).filter(BlogThread.thread_id == thread_id).first()
+    if not db_thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    if db_thread.user_id != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return {
+        "thread_id": db_thread.thread_id,
+        "topic": db_thread.topic,
+        "status": db_thread.status,
+        "created_at": db_thread.created_at,
+        "content": db_thread.content,
+        "markdown_content": db_thread.markdown_content,
     }

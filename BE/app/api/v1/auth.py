@@ -25,7 +25,7 @@ def get_initial_usage_metrics(plan_type: str) -> dict:
     if plan_type == "basic":
         return {
             "blogs_generated": 0,
-            "blogs_limit": 1,
+            "blogs_limit": 10,
             "words_generated": 0,
             "words_limit": 50000,
             "reset_date": datetime.utcnow().isoformat()
@@ -103,6 +103,7 @@ def increment_blog_count(user: User, word_count: int = 0, db: Session = None) ->
     Returns updated usage metrics.
     """
     from config.logging import get_logger
+    from sqlalchemy.orm.attributes import flag_modified
     logger = get_logger("auth_utils")
 
     if not db:
@@ -115,16 +116,18 @@ def increment_blog_count(user: User, word_count: int = 0, db: Session = None) ->
         metrics = check_and_reset_quota(user, db)
         logger.info(f"Current metrics before increment: {metrics}")
 
-        metrics["blogs_generated"] = metrics.get("blogs_generated", 0) + 1
-        metrics["words_generated"] = metrics.get("words_generated", 0) + word_count
+        # Create a new dict to ensure SQLAlchemy detects the change
+        new_metrics = metrics.copy()
+        new_metrics["blogs_generated"] = new_metrics.get("blogs_generated", 0) + 1
+        new_metrics["words_generated"] = new_metrics.get("words_generated", 0) + word_count
 
-        user.usage_metrics = metrics
+        user.usage_metrics = new_metrics
+        flag_modified(user, "usage_metrics")  # Mark the field as modified
         db.commit()
-        db.flush()  # Ensure changes are written to database
 
-        logger.info(f"Metrics after increment: {metrics}")
+        logger.info(f"Metrics after increment: {new_metrics}")
         logger.info(f"User usage_metrics after commit: {user.usage_metrics}")
-        return metrics
+        return new_metrics
     except Exception as e:
         logger.log_error_with_context(e, "Error incrementing blog count")
         raise
