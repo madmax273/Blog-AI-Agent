@@ -13,6 +13,7 @@ class BlogThread(Base):
     markdown_content = Column(Text, nullable=True)  # Raw markdown for reference
     status = Column(String, default="processing")
     created_at = Column(DateTime, default=datetime.utcnow)
+    image_urls = Column(JSON, nullable=True)  # Store Unsplash image URLs and metadata
 
 class User(Base):
     __tablename__ = "users"

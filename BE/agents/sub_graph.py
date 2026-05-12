@@ -17,6 +17,23 @@ import markdown2
 
 logger = get_logger("sub_graph")
 
+import re
+
+def sanitize_markdown(md: str) -> str:
+    """
+    Fix common LLM markdown formatting mistakes before conversion to HTML:
+    1. Lines starting with '* ' (asterisk bullet) -> '- ' (proper unordered list)
+    2. Inline '* text' used as pseudo-bullets inside paragraphs -> moved to list items
+    """
+    fixed_lines = []
+    for line in md.splitlines():
+        # Convert '* text' at start of line to '- text'
+        fixed = re.sub(r'^\*\s+', '- ', line)
+        fixed_lines.append(fixed)
+    result = "\n".join(fixed_lines)
+    return result
+
+
 # ============================================================
 # ReducerWithImages Subgraph
 #    merge_content -> decide_images -> generate_and_place_images
@@ -35,9 +52,9 @@ async def merge_content(state: BlogAgentState) -> dict:
             if len(section_md) < 50:
                 logger.warning(f"  Section {task_id} is very short: {section_md[:100]}")
 
-        ordered_sections = [md for _, md in sorted(state["sections"], key=lambda x: x[0])]
+        ordered_sections = [sanitize_markdown(md) for _, md in sorted(state["sections"], key=lambda x: x[0])]
         body = "\n\n".join(ordered_sections).strip()
-        merged_md = f"# {plan.blog_title}\n\n{body}\n"
+        merged_md = sanitize_markdown(f"# {plan.blog_title}\n\n{body}\n")
 
         logger.info(f"Merged {len(ordered_sections)} sections, total characters: {len(merged_md)}")
         logger.debug(f"Merged markdown preview: {merged_md[:200]}...")
@@ -78,10 +95,12 @@ async def decide_images(state: BlogAgentState, llm) -> dict:
         )
 
         logger.info(f"Image plan generated with {len(image_plan.images)} images")
+        logger.info(f"Image keywords: {image_plan.image_keywords}")
 
         return {
             "md_with_placeholders": image_plan.md_with_placeholders,
             "image_specs": [img.model_dump() for img in image_plan.images],
+            "image_keywords": image_plan.image_keywords,
             "error": None
         }
     except Exception as e:
@@ -155,8 +174,52 @@ async def _gemini_generate_image_bytes(prompt: str) -> bytes:
         return None
 
 
+async def _search_unsplash_image(keywords: list, image_index: int = 0) -> dict:
+    """
+    Search for an image on Unsplash using the given keywords.
+    Uses image_index to cycle through different keywords and page offsets,
+    ensuring each image in a blog is distinct.
+    Returns image data with URLs and photographer info, or None if failed.
+    """
+    try:
+        from utils.unsplash_utils import get_unsplash_client
+
+        if not keywords:
+            logger.warning("No keywords provided for Unsplash search")
+            return None
+
+        # Cycle through keywords by index so each image uses a different search term
+        search_query = keywords[image_index % len(keywords)]
+        # Use different page offsets to further vary results
+        page = (image_index // len(keywords)) + 1
+        logger.info(f"Searching Unsplash with keyword: '{search_query}' (page={page}, index={image_index})")
+
+        client = get_unsplash_client()
+        image_data = client.search_and_get_image(search_query, orientation="landscape", page=page)
+
+        if image_data:
+            logger.info(f"Found Unsplash image: {image_data['image_url']}")
+            return image_data
+        else:
+            # Fallback: try any other keyword
+            for fallback_idx, kw in enumerate(keywords):
+                if kw == search_query:
+                    continue
+                logger.warning(f"Trying fallback keyword: '{kw}'")
+                image_data = client.search_and_get_image(kw, orientation="landscape", page=page)
+                if image_data:
+                    logger.info(f"Found Unsplash image with fallback keyword: {image_data['image_url']}")
+                    return image_data
+            logger.warning(f"No Unsplash image found for any keyword")
+            return None
+    except Exception as e:
+        logger.log_error_with_context(e, "Error searching Unsplash")
+        return None
+
+
+
 async def generate_and_place_images(state: BlogAgentState) -> dict:
-    """Generate images and place them in the markdown."""
+    """Generate images and place them in the markdown. Uses Unsplash as fallback if AI generation fails."""
     try:
         logger.info("Generate and place images node started")
         plan_data = state["plan"]
@@ -176,7 +239,10 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
         images_dir = Path("images")
         images_dir.mkdir(exist_ok=True)
 
-        for spec in image_specs:
+        # Store Unsplash image URLs for database
+        unsplash_images = []
+
+        for img_idx, spec in enumerate(image_specs):
             placeholder = spec["placeholder"]
             filename = spec["filename"]
             out_path = images_dir / filename
@@ -186,9 +252,34 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
                 logger.info(f"Generating image: {filename}")
                 img_bytes = await _gemini_generate_image_bytes(spec["prompt"])
                 if img_bytes is None:
-                    # Skip image generation (quota exhausted or failed), remove placeholder
-                    logger.warning(f"Skipping image generation for {filename}, removing placeholder")
-                    md = md.replace(placeholder, "")
+                    # Fallback to Unsplash API — use a different keyword & page per image
+                    logger.warning(f"AI image generation failed for {filename}, trying Unsplash fallback")
+                    image_keywords = state.get("image_keywords", [])
+                    unsplash_data = await _search_unsplash_image(image_keywords, image_index=img_idx)
+                    if unsplash_data:
+                        # Use Unsplash image
+                        img_md = f"""
+![{spec['alt']}]({unsplash_data['image_url']})
+
+*{spec['caption']}*
+
+*Photo by [{unsplash_data['photographer']}]({unsplash_data['photographer_url']}) on [Unsplash]({unsplash_data['photo_url']})*
+"""
+                        md = md.replace(placeholder, img_md)
+                        unsplash_images.append({
+                            "placeholder": placeholder,
+                            "filename": filename,
+                            "unsplash_url": unsplash_data["image_url"],
+                            "download_url": unsplash_data["download_url"],
+                            "photographer": unsplash_data["photographer"],
+                            "photographer_url": unsplash_data["photographer_url"],
+                            "photo_url": unsplash_data["photo_url"]
+                        })
+                        logger.info(f"Using Unsplash image for {filename}")
+                    else:
+                        # Remove placeholder if both AI and Unsplash fail
+                        logger.warning(f"Both AI and Unsplash failed for {filename}, removing placeholder")
+                        md = md.replace(placeholder, "")
                     continue
                 out_path.write_bytes(img_bytes)
                 logger.info(f"Image saved: {filename}")
@@ -236,14 +327,14 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
             logger.log_error_with_context(e, "Error saving blog.html")
             # Continue even if file save fails
 
-        return {"markdown_content": md, "html_content": html, "error": None}
+        return {"markdown_content": md, "html_content": html, "error": None, "image_urls": unsplash_images}
     except Exception as e:
         logger.log_error_with_context(e, "Error in generate_and_place_images")
         # Fallback: return merged markdown without images
         logger.warning("Falling back to merged markdown without images")
         fallback_md = state.get("merged_md", "# Error\n\nFailed to generate blog with images.")
         fallback_html = markdown2.markdown(fallback_md, extras=["fenced-code-blocks", "tables", "header-ids"])
-        return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e)}
+        return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e), "image_urls": []}
 
 
 def create_reducer_subgraph(llm):

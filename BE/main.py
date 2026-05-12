@@ -148,7 +148,7 @@ async def root():
         return response
 
     except Exception as e:
-        logger.exception(f"Root endpoint failed: {e}")
+        logger.error(f"Root endpoint failed: {e}")
 
         return {
             "status": "error",

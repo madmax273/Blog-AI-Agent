@@ -98,11 +98,23 @@ export default function PreviousBlogsPage() {
                 onClick={() => router.push(`/blog/${thread.thread_id}`)}
               >
                 {/* Image */}
-                <div className="w-full h-48 overflow-hidden">
+                <div className="w-full h-48 overflow-hidden bg-muted">
                   <img
-                    src="/images/workspace.jpg"
+                    src={
+                      thread.image_urls && thread.image_urls.length > 0
+                        ? (typeof thread.image_urls[0] === "string"
+                            ? thread.image_urls[0]
+                            : thread.image_urls[0]?.unsplash_url
+                              || thread.image_urls[0]?.url
+                              || thread.image_urls[0]?.regular
+                              || "/images/workspace.jpg")
+                        : "/images/workspace.jpg"
+                    }
                     alt={thread.topic}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "/images/workspace.jpg"
+                    }}
                   />
                 </div>
 

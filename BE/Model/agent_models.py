@@ -63,6 +63,10 @@ class ImageSpec(BaseModel):
 class GlobalImagePlan(BaseModel):
     md_with_placeholders: str
     images: List[ImageSpec] = Field(default_factory=list)
+    image_keywords: List[str] = Field(
+        default_factory=list,
+        description="3-5 keywords for searching relevant images on Unsplash, specific to the blog topic"
+    )
 
 class BlogAgentState(TypedDict):
     prompt: str
@@ -95,8 +99,10 @@ class BlogAgentState(TypedDict):
     merged_md: str
     md_with_placeholders: str
     image_specs: List[dict]
+    image_keywords: List[str]  # Keywords for Unsplash image search
     markdown_content: str
     html_content: str
+    image_urls: List[dict]   # Unsplash image URLs and metadata saved to DB
 
     #error tracking
     error: Optional[str]
