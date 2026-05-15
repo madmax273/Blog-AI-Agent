@@ -44,7 +44,17 @@ GENERATOR_PROMPT=""" You are a senior technical writer and developer advocate.
                     - Follow the provided Goal and cover ALL Bullets in order (do not skip or merge bullets).
                     - Stay close to Target words (±15%).
                     - Output ONLY the section content in Markdown (no blog title H1, no extra commentary).
-                    - Start with a '## <Section Title>' heading.
+                    - Start with a '## <Section Title>' heading (bold, rendered as H2).
+                    - For subsections inside this section, use '### <Subsection Title>' (H3).
+
+                    CRITICAL MARKDOWN FORMATTING RULES (violating these is a failure):
+                    - NEVER use bare asterisks (*) as bullet points inside a paragraph.
+                    - ALL bullet/list items MUST use proper Markdown list syntax on their own line:
+                        - Unordered: start with '- ' (hyphen + space)
+                        - Ordered:   start with '1. ' etc.
+                    - Bold text: **text** — only for key terms, NOT for list bullets.
+                    - Short paragraphs (3–5 sentences max). Use lists for enumerations.
+                    - Code blocks MUST use triple backtick fences with a language tag: ```python
 
                     Scope guard:
                     - If blog_kind == "news_roundup": do NOT turn this into a tutorial/how-to guide.
@@ -52,20 +62,17 @@ GENERATOR_PROMPT=""" You are a senior technical writer and developer advocate.
                       Focus on summarizing events and implications.
 
                     Grounding policy:
-                    - If mode == open_book:
-                      - Do NOT introduce any specific event/company/model/funding/policy claim unless it is supported by provided Evidence URLs.
-                      - For each event claim, attach a source as a Markdown link: ([Source](URL)).
-                      - Only use URLs provided in Evidence. If not supported, write: "Not found in provided sources."
-                    - If requires_citations == true:
-                      - For outside-world claims, cite Evidence URLs the same way.
+                    - If mode == open_book OR requires_citations == true:
+                      - For each event/fact claim, cite using a Markdown inline link: [Source Name](URL)
+                      - OR use numbered footnotes: [^1], [^2], etc. with a '## Sources' section at the end.
+                      - ONLY use URLs provided in Evidence. If not supported by evidence, write: "(source not available)".
+                    - If Evidence URLs are provided AND requires_citations == true:
+                      - You MUST include a '## Sources' section at the end of this section listing all cited URLs as:
+                        - [Title or Source Name](URL)
                     - Evergreen reasoning is OK without citations unless requires_citations is true.
 
                     Code:
                     - If requires_code == true, include at least one minimal, correct code snippet relevant to the bullets.
-
-                    Style:
-                    - Short paragraphs, bullets where helpful, code fences for code.
-                    - Avoid fluff/marketing. Be precise and implementation-oriented.
                     """
 
 
@@ -155,8 +162,22 @@ Decide if images/diagrams are needed for THIS blog.
 Rules:
 - Max 3 images total.
 - Each image must materially improve understanding (diagram/flow/table-like visual).
-- Insert placeholders exactly: [[IMAGE_1]], [[IMAGE_2]], [[IMAGE_3]].
+- CRITICAL PLACEMENT RULE: Insert image placeholders INSIDE section bodies, immediately after the
+  first paragraph of a relevant section — NOT at the very end of the document and NOT after the
+  conclusion/summary section. Each placeholder must appear within a section that the image is
+  directly relevant to. Spread images across DIFFERENT sections of the blog.
+- Insert placeholders exactly: [[IMAGE_1]], [[IMAGE_2]], [[IMAGE_3]] (on their own line, surrounded
+  by blank lines).
 - If no images needed: md_with_placeholders must equal input and images=[].
-- Avoid decorative images; prefer technical diagrams with short labels.
+- Avoid decorative images; prefer topic-relevant photos or technical diagrams.
+- Do NOT place any placeholder after the last section (Conclusion/Summary/Call to Action).
+
+IMPORTANT: Provide 3-5 specific keywords for image search, one per key concept in the blog.
+These keywords should be concise and directly related to the main subject matter.
+Provide DIFFERENT keywords for each concept — they will be used one per image to fetch DIFFERENT photos.
+Example for a geopolitics blog: ["geopolitics", "military strategy", "economic sanctions", "nuclear weapons", "diplomacy"]
+Example for a tech blog: ["software architecture", "machine learning", "cloud computing", "API design", "cybersecurity"]
+Do NOT include generic terms like "chart", "diagram", "illustration" in the keywords.
+
 Return strictly GlobalImagePlan.
-"""
+"""

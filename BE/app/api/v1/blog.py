@@ -74,6 +74,7 @@ async def run_agent_background(agent: BlogAgent, thread_id: str, inputs: dict):
                         db_thread.content = state_snapshot.values["html_content"]
                         db_thread.markdown_content = state_snapshot.values.get("markdown_content")
                         db_thread.status = "completed"
+                        db_thread.image_urls = state_snapshot.values.get("image_urls", [])
 
                         # Increment blog count for user
                         user = db.query(User).filter(User.id == int(db_thread.user_id)).first()
@@ -223,6 +224,7 @@ async def resume_blog(thread_id: str, req: ResumeRequest, background_tasks: Back
                             db_thread.content = state_snapshot.values["html_content"]
                             db_thread.markdown_content = state_snapshot.values.get("markdown_content")
                             db_thread.status = "completed"
+                            db_thread.image_urls = state_snapshot.values.get("image_urls", [])
 
                             # Increment blog count for user
                             user = db.query(User).filter(User.id == int(db_thread.user_id)).first()
@@ -257,6 +259,7 @@ async def get_user_threads(current_user: User = Depends(get_current_user), db: S
                 "created_at": t.created_at,
                 "content": t.content,
                 "markdown_content": t.markdown_content,
+                "image_urls": t.image_urls or [],
             } for t in threads
         ]
     }
@@ -278,4 +281,5 @@ async def get_thread_by_id(thread_id: str, current_user: User = Depends(get_curr
         "created_at": db_thread.created_at,
         "content": db_thread.content,
         "markdown_content": db_thread.markdown_content,
+        "image_urls": db_thread.image_urls
     }
