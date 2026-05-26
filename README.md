@@ -56,20 +56,20 @@ The core strength of the Blog AI Agent lies in its modular LangGraph architectur
 graph TD
     START([Start / Prompt Input]) --> Router{Router Node}
     
-    Router -- Needs Research (open_book / hybrid) --> Research[Research Node (Tavily Search)]
-    Router -- No Research (closed_book) --> Planner[Planner Node (Outline Draft)]
+    Router -- Needs Research (open_book / hybrid) --> Research["Research Node (Tavily Search)"]
+    Router -- No Research (closed_book) --> Planner["Planner Node (Outline Draft)"]
     
     Research --> Planner
-    Planner --> HITL[HITL Interrupt (Awaiting User Review)]
+    Planner --> HITL["HITL Interrupt (Awaiting User Review)"]
     
     HITL -- Rejected / Revisions Requested --> Planner
-    HITL -- Approved --> Fanout[Worker Fanout (Parallel Section Writing)]
+    HITL -- Approved --> Fanout["Worker Fanout (Parallel Section Writing)"]
     
     Fanout --> Worker1[Worker Section 1]
     Fanout --> Worker2[Worker Section 2]
     Fanout --> WorkerN[Worker Section N]
     
-    Worker1 --> Reducer[Reducer Node (Sort, Merge & Markdown2HTML)]
+    Worker1 --> Reducer["Reducer Node (Sort, Merge & Markdown2HTML)"]
     Worker2 --> Reducer
     WorkerN --> Reducer
     
