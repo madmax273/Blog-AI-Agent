@@ -199,7 +199,9 @@ async def signup(data: UserCreate, request: Request, db: Session = Depends(get_d
         refresh_token = create_refresh_token({"sub": str(new_user.id)})
 
         content = {
-            "user": UserOut.model_validate(new_user)
+            "user": UserOut.model_validate(new_user),
+            "refresh_token": refresh_token,
+            "access_token": access_token,
         }
         content = jsonable_encoder(content)
         return JSONResponse(content=content, status_code=status.HTTP_201_CREATED)

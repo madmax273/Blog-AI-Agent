@@ -3,11 +3,9 @@
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Navbar } from "@/components/blog-ai/navbar"
-import { Calendar, Clock, ArrowLeft, FileText, Copy, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Calendar, Clock, ArrowLeft, FileText, Copy } from "lucide-react"
 import { useAuthStore } from "@/stores/authStore"
-
-const API_BASE = "http://localhost:8000/api/v1/blog"
+import { BLOG_API_BASE } from "@/lib/api"
 
 export default function BlogDetailPage() {
   const params = useParams()
@@ -21,7 +19,7 @@ export default function BlogDetailPage() {
     if (!params.threadId) return
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/threads/${params.threadId}`, {
+      const res = await fetch(`${BLOG_API_BASE}/threads/${params.threadId}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (!res.ok) {

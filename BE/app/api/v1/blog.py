@@ -36,7 +36,9 @@ async def get_agent():
     global agent_instance
     if agent_instance is None:
         load_dotenv()
-        GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+        GROQ_API_KEY = settings.GROQ_API_KEY
+        if not GROQ_API_KEY:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured")
         # Initialize LLM and Checkpointer
         # llm = ChatGroq(api_key=GROQ_API_KEY, model="meta-llama/llama-4-scout-17b-16e-instruct")
         llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.3-70b-versatile")
