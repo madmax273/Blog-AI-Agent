@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from datetime import datetime, date, timedelta
 from agents.sub_graph import create_reducer_subgraph
 from config.logging import get_logger
+from utils.html_utils import sanitize_html
 import asyncio
 
 logger=get_logger()
@@ -409,6 +410,7 @@ class BlogAgent:
                     "smarty-pants"
                 ]
             )
+            final_html = sanitize_html(final_html)
             logger.info("Converted markdown to HTML in reducer")
             logger.debug(f"HTML preview: {final_html[:500]}...")
 
@@ -419,6 +421,7 @@ class BlogAgent:
             fallback_md = f"# Error\n\nAn error occurred while generating the blog: {str(e)}"
             import markdown2
             fallback_html = markdown2.markdown(fallback_md, extras=["fenced-code-blocks", "tables", "header-ids"])
+            fallback_html = sanitize_html(fallback_html)
             return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e)}
        
 

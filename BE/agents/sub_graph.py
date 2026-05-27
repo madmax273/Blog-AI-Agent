@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 from langchain_core.messages import SystemMessage, HumanMessage
 from config.logging import get_logger
+from utils.html_utils import sanitize_html
 import markdown2
 
 logger = get_logger("sub_graph")
@@ -311,6 +312,7 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
                     "smarty-pants"
                 ]
             )
+            html = sanitize_html(html)
             logger.info(f"Converted markdown to HTML, length: {len(html)}")
             logger.info(f"HTML starts with: {html[:200]}")
             logger.info(f"Markdown starts with: {md[:200]}")
@@ -334,6 +336,7 @@ async def generate_and_place_images(state: BlogAgentState) -> dict:
         logger.warning("Falling back to merged markdown without images")
         fallback_md = state.get("merged_md", "# Error\n\nFailed to generate blog with images.")
         fallback_html = markdown2.markdown(fallback_md, extras=["fenced-code-blocks", "tables", "header-ids"])
+        fallback_html = sanitize_html(fallback_html)
         return {"markdown_content": fallback_md, "html_content": fallback_html, "error": str(e), "image_urls": []}
 
 

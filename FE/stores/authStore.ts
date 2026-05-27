@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-
-const API_BASE = "http://localhost:8000/api/v1"
+import { API_V1_BASE } from '@/lib/api'
 
 interface User {
   id: number
@@ -61,7 +60,7 @@ export const useAuthStore = create<AuthState>()(
         formData.append("username", email)
         formData.append("password", password)
 
-        const res = await fetch(`${API_BASE}/auth/login`, {
+        const res = await fetch(`${API_V1_BASE}/auth/login`, {
           method: "POST",
           body: formData
         })
@@ -87,7 +86,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       signup: async (name: string, email: string, password: string) => {
-        const res = await fetch(`${API_BASE}/auth/signup`, {
+        const res = await fetch(`${API_V1_BASE}/auth/signup`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, email, password })
@@ -99,7 +98,16 @@ export const useAuthStore = create<AuthState>()(
         }
 
         const data = await res.json()
-        set({ user: data.user })
+        set({
+          token: data.access_token,
+          user: data.user,
+          isAuthenticated: true
+        })
+
+        localStorage.setItem("access_token", data.access_token)
+        localStorage.setItem("refresh_token", data.refresh_token)
+
+        await get().fetchUserProfile()
       },
 
       logout: () => {
@@ -118,7 +126,7 @@ export const useAuthStore = create<AuthState>()(
         if (!token) return
 
         try {
-          const res = await fetch(`${API_BASE}/auth/me`, {
+          const res = await fetch(`${API_V1_BASE}/auth/me`, {
             headers: {
               Authorization: `Bearer ${token}`
             }
@@ -142,7 +150,7 @@ export const useAuthStore = create<AuthState>()(
         if (!token) return
         
         try {
-          const res = await fetch(`${API_BASE}/auth/me`, {
+          const res = await fetch(`${API_V1_BASE}/auth/me`, {
             headers: {
               Authorization: `Bearer ${token}`
             }

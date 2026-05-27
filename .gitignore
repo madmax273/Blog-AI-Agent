@@ -105,6 +105,7 @@ poetry.lock
 package-lock.json
 pnpm-lock.yaml
 yarn.lock
+!FE/package-lock.json
 
 # PEP 582
 __pypackages__/
@@ -263,8 +264,12 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
 
 # Generated blog files
+blog.md
+blog.html
 generated_blog.md
 generated_*.md
 

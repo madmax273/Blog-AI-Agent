@@ -6,10 +6,8 @@ import { useAuthStore } from "@/stores/authStore"
 import { AuthModal } from "@/components/auth-modal"
 import { Calendar, Clock, FileText, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
-
-const API_BASE = "http://localhost:8000/api/v1/blog"
+import { BLOG_API_BASE } from "@/lib/api"
 
 export default function PreviousBlogsPage() {
   const router = useRouter()
@@ -22,7 +20,7 @@ export default function PreviousBlogsPage() {
     if (!user) return
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/threads`, {
+      const res = await fetch(`${BLOG_API_BASE}/threads`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (!res.ok) {

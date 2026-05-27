@@ -11,8 +11,7 @@ import { AuthModal } from "@/components/auth-modal"
 import { QuotaModal } from "@/components/quota-modal"
 import { useAuthStore } from "@/stores/authStore"
 import { Button } from "@/components/ui/button"
-
-const API_BASE = "http://localhost:8000/api/v1/blog"
+import { BLOG_API_BASE } from "@/lib/api"
 
 export default function BlogAIPage() {
   const router = useRouter()
@@ -92,7 +91,7 @@ export default function BlogAIPage() {
 
   const pollStatus = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/status/${id}`, {
+      const res = await fetch(`${BLOG_API_BASE}/status/${id}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -130,7 +129,7 @@ export default function BlogAIPage() {
     if (!user) return
     setIsLoadingThreads(true)
     try {
-      const res = await fetch(`${API_BASE}/threads`, {
+      const res = await fetch(`${BLOG_API_BASE}/threads`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (!res.ok) {
@@ -175,7 +174,7 @@ export default function BlogAIPage() {
     setArticleContent(null)
     
     try {
-      const res = await fetch(`${API_BASE}/generate`, {
+      const res = await fetch(`${BLOG_API_BASE}/generate`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -201,7 +200,7 @@ export default function BlogAIPage() {
     setStatus("generating_article")
     
     try {
-      await fetch(`${API_BASE}/resume/${threadId}`, {
+      await fetch(`${BLOG_API_BASE}/resume/${threadId}`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
