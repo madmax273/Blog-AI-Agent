@@ -119,6 +119,12 @@ graph TD
     class HITL highlight;
 ```
 
+#### 🗺️ Excalidraw Architecture Flowchart
+A detailed structural visualization of the core multi-agent graph execution flow, routing patterns, and secondary sub-graphs:
+<p align="center">
+  <img src="photos/Blog%20AI6.jpeg" width="90%" alt="LangGraph Architecture Flowchart" />
+</p>
+
 ---
 
 ## 🛠️ Tech Stack
