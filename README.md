@@ -10,11 +10,13 @@
 [![Tailwind CSS v4](https://img.shields.io/badge/Styling-Tailwind_v4-38B2AC?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Docker](https://img.shields.io/badge/Container-Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 
+
 ---
 
 ## 📖 Table of Contents
 
 - [🌟 Features Overview](#-features-overview)
+- [✨ UI Showcase](#-ui-showcase)
 - [🏗️ Multi-Agent Architecture (LangGraph)](#-multi-agent-architecture-langgraph)
 - [🛠️ Tech Stack](#️-tech-stack)
 - [💾 Database Schema](#-database-schema)
@@ -36,6 +38,42 @@ The **Blog AI Agent** is not just another simple text generator. It is a full-fl
 *   **⚡ Parallel Section Writing (Fanout)**: Once the outline is approved, the main graph spawns parallel workers concurrently writing separate blog sections, respecting the targeted constraints, tone, and word counts.
 *   **🎨 Premium Glassmorphism Frontend**: A Next.js visual dashboard utilizing a high-end dark interface, real-time generation trackers, a responsive Plan Editor, an rich Article Preview renderer, and full quota management.
 *   **🔐 Production Ready Security**: JWT authentication for user signup/login, route guards, SQLite/SQLAlchemy schemas, and strict word count quota/blog limit enforcement.
+
+---
+
+## ✨ UI Showcase
+
+Here is a visual overview of the premium, responsive dashboard of the **Blog AI Agent**:
+
+### 1. 🚀 Main Prompt Dashboard
+A sleek, modern interface allowing users to submit new blog topics, select targeted writing tones, and view active status indicators.
+<p align="center">
+  <img src="photos/BLog%20AI1.png" width="90%" alt="Prompt Dashboard" />
+</p>
+
+### 2. 🧑‍💻 Human-in-the-Loop Outline Approval & Draft Generation
+Native graph interruption allows users to inspect and approve the dynamically generated blog outline, tone, sections, and targeted audience before starting any generation.
+<p align="center">
+  <img src="photos/Blog%20AI2.png" width="90%" alt="Human-in-the-Loop Interface" />
+</p>
+
+### 3. 💾 Previous Blogs Card Grid
+A responsive archive system showing beautiful card views of all previously generated blog posts alongside their status and metadata.
+<p align="center">
+  <img src="photos/Blog%20AI3.png" width="90%" alt="Previous Blogs Grid" />
+</p>
+
+### 4. 📝 Rendered Article View
+A premium detailed article preview screen showing clean HTML rendered blog output containing dynamically embedded assets and responsive typography.
+<p align="center">
+  <img src="photos/Blog%20AI4.png" width="90%" alt="Article Detail View" />
+</p>
+
+### 5. 💳 Plans & Pricing Options
+Fully interactive pricing tier selection page for tier subscription limits and features.
+<p align="center">
+  <img src="photos/Blog%20AI5.png" width="90%" alt="Plans and Pricing Page" />
+</p>
 
 ---
 
